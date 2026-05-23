@@ -17,7 +17,7 @@ import multer from "multer";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import fetch from 'node-fetch';
 
-// --- MASTER UTILS & EMAIL TEMPLATES (FIXED PATH) ---
+// --- MASTER UTILS & EMAIL TEMPLATES (FIXED: no extension) ---
 import {
   getSignupEmail,
   getLoginEmail,
@@ -27,16 +27,13 @@ import {
   getWishlistEmail,
   getShippedEmail,
   getDeliveredEmail
-} from "../src/utils/AtelierEmails.js";
+} from "../src/utils/AtelierEmails";
 
 dotenv.config();
 
 const app = express();
 
-/**
- * MIDDLEWARE CONFIGURATION
- * Optimized for cross-origin communication between denfit.shop and the API
- */
+// MIDDLEWARE
 app.use(cors({
   origin: ["https://www.denfit.shop", "https://denfit.shop", "http://localhost:3000"],
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
@@ -45,10 +42,7 @@ app.use(cors({
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-/**
- * STATIC DIRECTORY CONFIGURATION
- * Ensures that uploaded images are accessible via URL
- */
+// STATIC DIR
 const uploadDir = path.join(process.cwd(), 'uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
@@ -56,9 +50,8 @@ if (!fs.existsSync(uploadDir)) {
 app.use('/uploads', express.static(uploadDir));
 
 // =========================================================
-// --- 1. TYPES & INTERFACES (Professional Type Safety) ---
+// TYPES & INTERFACES
 // =========================================================
-
 interface IElement {
   text: string;
   color: string;
@@ -85,9 +78,8 @@ interface IProduct {
 }
 
 // =========================================================
-// --- 2. DATABASE MODELS (Mongoose Schemas) ---
+// DATABASE MODELS
 // =========================================================
-
 const ElementSchema = {
   text: { type: String, default: "" },
   color: { type: String, default: "#0F0F0F" },
@@ -170,38 +162,28 @@ const SiteConfig = mongoose.models.SiteConfig || mongoose.model("SiteConfig", Si
 const Order = mongoose.models.Order || mongoose.model("Order", OrderSchema);
 
 // =========================================================
-// --- 3. STORAGE ENGINE (Professional Multer Setup) ---
+// MULTER STORAGE
 // =========================================================
-
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, 'uploads/');
-  },
+  destination: (req, file, cb) => { cb(null, 'uploads/'); },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     cb(null, uniqueSuffix + path.extname(file.originalname));
   }
 });
-
-const upload = multer({
-  storage: storage,
-  limits: { fileSize: 10 * 1024 * 1024 } // 10MB Limit
-});
+const upload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024 } });
 
 // =========================================================
-// --- 4. AI STYLIST ENGINE (Gemini Integration) ---
+// AI STYLIST
 // =========================================================
-
 app.post("/api/ai/stylist", async (req: Request, res: Response) => {
   try {
     const { message, history } = req.body;
     const apiKey = process.env.GEMINI_API_KEY;
-
     if (!apiKey) return res.status(500).json({ error: "AI Gateway Key Missing" });
 
     const config = await SiteConfig.findOne({ key: "global" }).lean();
     const brandName = (config as any)?.header?.logoText?.text || "DENFIT";
-
     const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
 
     const response = await fetch(API_URL, {
@@ -228,22 +210,18 @@ app.post("/api/ai/stylist", async (req: Request, res: Response) => {
 });
 
 // =========================================================
-// --- 5. AUTHENTICATION & IDENTITY ---
+// AUTHENTICATION
 // =========================================================
-
 app.post("/api/auth/sync", async (req, res) => {
   try {
-    const { uid, email, displayName, photoURL, isNewUser } = req.body;
+    const { uid, email, displayName, photoURL } = req.body;
     if (!uid || !email) return res.status(400).json({ success: false });
-
     const role = (email === "admin@com" || email === process.env.ADMIN_EMAIL) ? "admin" : "user";
-
     const user = await User.findOneAndUpdate(
       { uid },
       { email: email.toLowerCase(), displayName, photoURL, role, lastLogin: new Date() },
       { upsert: true, new: true }
     );
-
     res.json({ success: true, user });
   } catch (error) {
     res.status(500).json({ success: false });
@@ -251,9 +229,8 @@ app.post("/api/auth/sync", async (req, res) => {
 });
 
 // =========================================================
-// --- 6. PRODUCT MANAGEMENT (FIXED 404 ENDPOINTS) ---
+// PRODUCT MANAGEMENT
 // =========================================================
-
 app.get("/api/products", async (req, res) => {
   try {
     const products = await Product.find().sort({ createdAt: -1 });
@@ -283,9 +260,8 @@ app.delete("/api/products/:id", async (req, res) => {
 });
 
 // =========================================================
-// --- 7. ORDER & TRANSACTIONAL SYSTEM ---
+// ORDERS
 // =========================================================
-
 app.post("/api/orders/create", async (req, res) => {
   try {
     const order = new Order(req.body);
@@ -306,9 +282,8 @@ app.get("/api/admin/orders", async (req, res) => {
 });
 
 // =========================================================
-// --- 8. ADMIN DASHBOARD & ACTIVITY LOGGING ---
+// ADMIN DASHBOARD
 // =========================================================
-
 app.get("/api/admin/customers", async (req, res) => {
   try {
     const customers = await User.find({ role: "user" }).sort({ createdAt: -1 });
@@ -342,9 +317,8 @@ app.post("/api/admin/upload", upload.single('file'), (req, res) => {
 });
 
 // =========================================================
-// --- 9. SITE CONFIGURATION (PERMANENCE FIX) ---
+// SITE CONFIGURATION
 // =========================================================
-
 app.get("/api/config", async (req, res) => {
   try {
     const config = await SiteConfig.findOne({ key: "global" });
@@ -374,9 +348,8 @@ app.post("/api/config/update", async (req, res) => {
 });
 
 // =========================================================
-// --- 10. IDENTITY RECOVERY (OTP & FORGOT PASSWORD) ---
+// OTP / FORGOT PASSWORD
 // =========================================================
-
 const otpStore = new Map();
 
 app.post("/api/auth/forgot-password", async (req, res) => {
@@ -384,19 +357,15 @@ app.post("/api/auth/forgot-password", async (req, res) => {
     const { email } = req.body;
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     otpStore.set(email, code);
-
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
     });
-
     await transporter.sendMail({
       from: `"DENFIT ATELIER" <${process.env.EMAIL_USER}>`,
       to: email,
       subject: "Security Access Key",
-      html: `<div style="padding:20px; font-family:sans-serif;">
-               <h2>Access Code: ${code}</h2>
-             </div>`
+      html: `<div style="padding:20px; font-family:sans-serif;"><h2>Access Code: ${code}</h2></div>`
     });
     res.json({ success: true });
   } catch(err) {
@@ -406,7 +375,7 @@ app.post("/api/auth/forgot-password", async (req, res) => {
 
 app.post("/api/auth/verify-code", (req, res) => {
   const { email, code } = req.body;
-  if(otpStore.get(email) === code) {
+  if (otpStore.get(email) === code) {
     otpStore.delete(email);
     res.json({ success: true });
   } else {
@@ -415,9 +384,8 @@ app.post("/api/auth/verify-code", (req, res) => {
 });
 
 // =========================================================
-// --- 11. GLOBAL SYSTEM HANDLERS ---
+// GLOBAL HANDLERS
 // =========================================================
-
 app.get("/", (req, res) => {
   res.status(200).send("SOVEREIGN API NODE IS ACTIVE");
 });
@@ -435,9 +403,8 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
 });
 
 // =========================================================
-// --- SERVER INITIATION (FIXED) ---
+// SERVER STARTUP (FIXED)
 // =========================================================
-
 const PORT = process.env.PORT || 3001;
 const MONGODB_URI = process.env.MONGODB_URI;
 
