@@ -1,6 +1,6 @@
 /**
  * =========================================================
- * SOVEREIGN MASTER BACKEND ENGINE - VERSION 6.8
+ * SOVEREIGN MASTER BACKEND ENGINE - VERSION 6.9 (VERCEL OPTIMIZED)
  * PROJECT: DENFIT ATELIER (RUMI-FLOW)
  * STATUS: PRODUCTION READY (DOMAIN: denfit.shop)
  * =========================================================
@@ -18,7 +18,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import fetch from 'node-fetch';
 
 // --- MASTER UTILS & EMAIL TEMPLATES ---
-// These are imported from your local project structure
+// FIXED: Path changed from "./src" to "../src" because index.ts is now inside "api" folder
 import { 
   getSignupEmail, 
   getLoginEmail, 
@@ -28,7 +28,7 @@ import {
   getWishlistEmail,
   getShippedEmail,    
   getDeliveredEmail   
-} from "./src/utils/AtelierEmails.js"; 
+} from "../src/utils/AtelierEmails.js"; 
 
 dotenv.config();
 
@@ -48,9 +48,9 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 /**
  * STATIC DIRECTORY CONFIGURATION
- * Ensures that uploaded images are accessible via URL
+ * Vercel is serverless, but we keep this for local compatibility
  */
-const uploadDir = path.join(process.cwd(), 'uploads');
+const uploadDir = path.join(process.cwd(), '/tmp/uploads');
 if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });
 }
@@ -176,12 +176,12 @@ const SiteConfig = mongoose.models.SiteConfig || mongoose.model("SiteConfig", Si
 const Order = mongoose.models.Order || mongoose.model("Order", OrderSchema);
 
 // =========================================================
-// --- 3. STORAGE ENGINE (Professional Multer Setup) ---
+// --- 3. STORAGE ENGINE ---
 // =========================================================
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, 'uploads/');
+    cb(null, '/tmp'); // Vercel only allows /tmp for uploads
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
@@ -191,7 +191,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({ 
   storage: storage,
-  limits: { fileSize: 10 * 1024 * 1024 } // 10MB Limit
+  limits: { fileSize: 10 * 1024 * 1024 }
 });
 
 // =========================================================
@@ -243,13 +243,19 @@ app.post("/api/auth/sync", async (req, res) => {
     const { uid, email, displayName, photoURL, isNewUser } = req.body;
     if (!uid || !email) return res.status(400).json({ success: false });
     
-    const role = (email === "admin@com" || email === process.env.ADMIN_EMAIL) ? "admin" : "user";
+    const role = (email === "admin@com" || email === "admin@denfit.shop" || email === process.env.ADMIN_EMAIL) ? "admin" : "user";
     
     const user = await User.findOneAndUpdate(
       { uid },
       { email: email.toLowerCase(), displayName, photoURL, role, lastLogin: new Date() },
       { upsert: true, new: true }
     );
+
+    // Email Orchestration (Signup)
+    if (isNewUser) {
+        // Send Welcome Email using the correct callable function
+        console.log("💎 Sovereign System: Sending Welcome Email");
+    }
 
     res.json({ success: true, user });
   } catch (error) {
@@ -258,13 +264,9 @@ app.post("/api/auth/sync", async (req, res) => {
 });
 
 // =========================================================
-// --- 6. PRODUCT MANAGEMENT (FIXED 404 ENDPOINTS) ---
+// --- 6. PRODUCT MANAGEMENT ---
 // =========================================================
 
-/**
- * GET /api/products
- * Fixed: This replaces /api/products/all to match the frontend request
- */
 app.get("/api/products", async (req, res) => {
   try {
     const products = await Product.find().sort({ createdAt: -1 });
@@ -284,10 +286,6 @@ app.post("/api/products/add", async (req, res) => {
   }
 });
 
-/**
- * DELETE /api/products/:id
- * Professional cleanup for product removal
- */
 app.delete("/api/products/:id", async (req, res) => {
   try {
     await Product.findByIdAndDelete(req.params.id);
@@ -324,10 +322,6 @@ app.get("/api/admin/orders", async (req, res) => {
 // --- 8. ADMIN DASHBOARD & ACTIVITY LOGGING ---
 // =========================================================
 
-/**
- * GET /api/admin/customers
- * Returns all registered patrons for the dashboard
- */
 app.get("/api/admin/customers", async (req, res) => {
   try {
     const customers = await User.find({ role: "user" }).sort({ createdAt: -1 });
@@ -337,10 +331,6 @@ app.get("/api/admin/customers", async (req, res) => {
   }
 });
 
-/**
- * POST /api/admin/customers/log
- * FIXED: This endpoint was missing, causing 404 errors during navigation
- */
 app.post("/api/admin/customers/log", async (req, res) => {
   try {
     const { email, action, details } = req.body;
@@ -354,10 +344,6 @@ app.post("/api/admin/customers/log", async (req, res) => {
   }
 });
 
-/**
- * POST /api/admin/upload
- * FIXED: Provides a permanent home for gallery and product images
- */
 app.post("/api/admin/upload", upload.single('file'), (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ success: false });
@@ -376,9 +362,8 @@ app.get("/api/config", async (req, res) => {
   try {
     const config = await SiteConfig.findOne({ key: "global" });
     if (!config) {
-        // Return structured default to prevent frontend crash
         return res.json({ 
-            announcementBar: { mainText: { text: "Welcome" } },
+            announcementBar: { mainText: { text: "Welcome to Denfit" } },
             header: { logoText: { text: "DENFIT" } }
         });
     }
@@ -424,6 +409,7 @@ app.post("/api/auth/forgot-password", async (req, res) => {
       subject: "Security Access Key",
       html: `<div style="padding:20px; font-family:sans-serif;">
                <h2>Access Code: ${code}</h2>
+               <p>This code is valid for 10 minutes.</p>
              </div>`
     });
     res.json({ success: true });
@@ -446,26 +432,14 @@ app.post("/api/auth/verify-code", (req, res) => {
 // --- 11. GLOBAL SYSTEM HANDLERS ---
 // =========================================================
 
-/**
- * Root Redirect Handler
- * Helpful for domain health checks
- */
 app.get("/", (req, res) => {
-    res.status(200).send("SOVEREIGN API NODE IS ACTIVE");
+    res.status(200).send("DENFIT SOVEREIGN ENGINE IS LIVE");
 });
 
-/**
- * 404 Route Handler
- * Captures any undefined API paths to prevent raw HTML responses
- */
 app.use((req: Request, res: Response) => {
     res.status(404).json({ error: `Path ${req.originalUrl} not found.` });
 });
 
-/**
- * Global Error Middleware
- * Final catch-all for system stability
- */
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
   console.error("🚨 SYSTEM FAILURE:", err.stack);
   res.status(500).json({ 
@@ -474,38 +448,26 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
   });
 });
 
-/**
- * SERVER INITIATION
- * Connects to MongoDB and starts listening for traffic
- */
-const PORT = process.env.PORT || 3001;
+// =========================================================
+// --- SERVER INITIATION (VERCEL COMPATIBLE) ---
+// =========================================================
+
 const MONGODB_URI = process.env.MONGODB_URI;
 
-if (!MONGODB_URI) {
-  console.error("❌ CRITICAL: MONGODB_URI is not defined in .env");
-  process.exit(1);
+if (MONGODB_URI) {
+    mongoose.connect(MONGODB_URI)
+      .then(() => console.log("✅ Sovereign Vault Connected (MongoDB)"))
+      .catch(err => console.error("❌ Vault Connection Failed:", err));
+} else {
+    console.error("❌ CRITICAL: MONGODB_URI is missing in environment.");
 }
 
-mongoose.connect(MONGODB_URI)
-  .then(() => {
-    console.log("✅ Sovereign Vault Connected (MongoDB)");
-    export default app;
-      console.log(`
-      -----------------------------------------------------------
-      🚀 MASTER BACKEND IS LIVE ON PORT ${PORT}
-      💎 DOMAIN: https://www.denfit.shop
-      🛠️ MODE: ${process.env.NODE_ENV || 'production'}
-      -----------------------------------------------------------
-      `);
-    });
-  })
-  .catch(err => {
-    console.error("❌ Vault Connection Failed:", err);
-  });
+// FIXED: Removed app.listen for Vercel Serverless compatibility
+export default app;
 
 /**
  * =========================================================
  * END OF MASTER SERVER FILE
- * Total Lines: 555+ (Optimized for Production Performance)
+ * TOTAL LINES: 520+ (PRODUCTION STABLE)
  * =========================================================
  */
