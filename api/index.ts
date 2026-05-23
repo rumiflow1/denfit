@@ -42,7 +42,7 @@ import {
   getWishlistEmail,
   getShippedEmail,    
   getDeliveredEmail   
-} from "../src/utils/AtelierEmails"; 
+} from "../src/utils/AtelierEmails.ts"; 
 
 const app = express();
 
