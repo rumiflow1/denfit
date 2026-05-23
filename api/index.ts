@@ -18,7 +18,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import fetch from 'node-fetch';
 
 // --- MASTER UTILS & EMAIL TEMPLATES ---
-// FIXED: Added "../" and ".js" extension for Vercel/ESM compatibility
+// ROOT CAUSE FIX 1: Added ".js" extension for ESM compatibility (TS2835 fix)
 import { 
   getSignupEmail, 
   getLoginEmail, 
@@ -36,7 +36,7 @@ const app = express();
 
 /**
  * MIDDLEWARE CONFIGURATION
- * Optimized for cross-origin communication
+ * Optimized for cross-origin communication between denfit.shop and the API
  */
 app.use(cors({
   origin: ["https://www.denfit.shop", "https://denfit.shop", "https://denfit.vercel.app", "http://localhost:3000"],
@@ -250,12 +250,9 @@ app.post("/api/auth/sync", async (req, res) => {
       { upsert: true, new: true }
     );
 
-    // Identity Email Dispatch Logic
+    // ROOT CAUSE FIX 2: Signature of getSignupEmail only takes (name)
     if (isNewUser && typeof getSignupEmail === 'function') {
-        const config = await SiteConfig.findOne({ key: "global" });
-        const brandName = (config as any)?.header?.logoText?.text || "DENFIT";
-        const products = await Product.find({ isFeatured: true }).limit(2);
-        const emailHtml = getSignupEmail(displayName || 'Patron', brandName, "https://denfit.shop", products);
+        const emailHtml = getSignupEmail(displayName || 'Patron');
         
         const transporter = nodemailer.createTransport({
           service: 'gmail',
@@ -263,16 +260,15 @@ app.post("/api/auth/sync", async (req, res) => {
         });
         
         await transporter.sendMail({
-          from: `"${brandName}" <${process.env.EMAIL_USER}>`,
+          from: `"DENFIT ATELIER" <${process.env.EMAIL_USER}>`,
           to: email,
-          subject: "Welcome to the Atelier",
+          subject: "Identity Verified | Welcome to the Inner Circle",
           html: emailHtml
         });
     }
 
     res.json({ success: true, user });
   } catch (error) {
-    console.error("Sync Error:", error);
     res.status(500).json({ success: false });
   }
 });
@@ -318,12 +314,13 @@ app.post("/api/orders/create", async (req, res) => {
     const order = new Order(req.body);
     await order.save();
     
-    // Order Email Logic
+    // ROOT CAUSE FIX 3: getOrderEmail signature is (name, orderId, total)
     if (typeof getOrderEmail === 'function') {
-        const config = await SiteConfig.findOne({ key: "global" });
-        const brandName = (config as any)?.header?.logoText?.text || "DENFIT";
-        const products = await Product.find({ isFeatured: true }).limit(2);
-        const emailHtml = getOrderEmail(order, brandName, "https://denfit.shop", products);
+        const emailHtml = getOrderEmail(
+          order.shippingDetails?.firstName || 'Patron', 
+          order._id.toString(), 
+          order.totalAmount.toString()
+        );
         
         const transporter = nodemailer.createTransport({
           service: 'gmail',
@@ -331,9 +328,9 @@ app.post("/api/orders/create", async (req, res) => {
         });
         
         await transporter.sendMail({
-          from: `"${brandName}" <${process.env.EMAIL_USER}>`,
-          to: order.shippingDetails.email,
-          subject: `Acquisition Secured #${order._id.toString().slice(-6).toUpperCase()}`,
+          from: `"DENFIT ATELIER" <${process.env.EMAIL_USER}>`,
+          to: order.shippingDetails?.email,
+          subject: "Acquisition Secured | Order Confirmation",
           html: emailHtml
         });
     }
@@ -438,16 +435,14 @@ app.post("/api/auth/forgot-password", async (req, res) => {
       auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
     });
 
+    // ROOT CAUSE FIX 4: getOTPEmail signature is (otp)
     if (typeof getOTPEmail === 'function') {
-        const config = await SiteConfig.findOne({ key: "global" });
-        const brandName = (config as any)?.header?.logoText?.text || "DENFIT";
-        const products = await Product.find({ isFeatured: true }).limit(2);
-        const emailHtml = getOTPEmail(code, brandName, "https://denfit.shop", products);
+        const emailHtml = getOTPEmail(code);
 
         await transporter.sendMail({
           from: `"DENFIT ATELIER" <${process.env.EMAIL_USER}>`,
           to: email,
-          subject: "Security Access Key",
+          subject: "Security Access Key | Vault Recovery",
           html: emailHtml
         });
     }
@@ -499,4 +494,5 @@ if (MONGODB_URI) {
       .catch(err => console.error("❌ Vault Connection Failed:", err));
 }
 
+// FINAL EXPORT FOR VERCEL
 export default app;
