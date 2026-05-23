@@ -3,7 +3,10 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx server.ts"
+    "dev": "tsx api/index.ts",
+    "build": "echo 'No build needed'",
+    "start": "node api/index.ts"
+  },
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
