@@ -1,6 +1,6 @@
 /**
  * =========================================================
- * SOVEREIGN MASTER BACKEND ENGINE - VERSION 6.8
+ * SOVEREIGN MASTER BACKEND ENGINE - VERSION 6.9
  * PROJECT: DENFIT ATELIER (RUMI-FLOW)
  * STATUS: PRODUCTION READY (DOMAIN: denfit.shop)
  * =========================================================
@@ -18,17 +18,9 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import fetch from 'node-fetch';
 
 // --- MASTER UTILS & EMAIL TEMPLATES ---
-// ROOT CAUSE FIX 1: Added ".js" extension for ESM compatibility (TS2835 fix)
-import { 
-  getSignupEmail, 
-  getLoginEmail, 
-  getOrderEmail, 
-  getAbandonedCartEmail,
-  getOTPEmail,
-  getWishlistEmail,
-  getShippedEmail,    
-  getDeliveredEmail   
-} from "../src/utils/AtelierEmails.js"; 
+// ROOT CAUSE FIX: Using Namespace Import (*) to fix TS2349 "Not Callable" error
+// Added ".js" to fix TS2835 ESM resolution error
+import * as EmailUtils from "../src/utils/AtelierEmails.js"; 
 
 dotenv.config();
 
@@ -36,7 +28,6 @@ const app = express();
 
 /**
  * MIDDLEWARE CONFIGURATION
- * Optimized for cross-origin communication between denfit.shop and the API
  */
 app.use(cors({
   origin: ["https://www.denfit.shop", "https://denfit.shop", "https://denfit.vercel.app", "http://localhost:3000"],
@@ -179,19 +170,12 @@ const Order = mongoose.models.Order || mongoose.model("Order", OrderSchema);
 // =========================================================
 
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, '/tmp'); 
-  },
+  destination: (req, file, cb) => { cb(null, '/tmp'); },
   filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, uniqueSuffix + path.extname(file.originalname));
+    cb(null, Date.now() + '-' + file.originalname);
   }
 });
-
-const upload = multer({ 
-  storage: storage,
-  limits: { fileSize: 10 * 1024 * 1024 } 
-});
+const upload = multer({ storage });
 
 // =========================================================
 // --- 4. AI STYLIST ENGINE ---
@@ -201,20 +185,15 @@ app.post("/api/ai/stylist", async (req: Request, res: Response) => {
   try {
     const { message, history } = req.body;
     const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) return res.status(500).json({ error: "AI Key Missing" });
 
-    if (!apiKey) return res.status(500).json({ error: "AI Gateway Key Missing" });
-
-    const config = await SiteConfig.findOne({ key: "global" }).lean();
-    const brandName = (config as any)?.header?.logoText?.text || "DENFIT";
-    
     const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
-
     const response = await fetch(API_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         contents: [
-          { role: "user", parts: [{ text: `System: You are the stylist for ${brandName}.` }] },
+          { role: "user", parts: [{ text: "You are a luxury stylist ambassador." }] },
           ...(history || []).map((m: any) => ({
             role: m.role === "user" ? "user" : "model",
             parts: [{ text: m.text }]
@@ -223,54 +202,40 @@ app.post("/api/ai/stylist", async (req: Request, res: Response) => {
         ]
       })
     });
-
     const data: any = await response.json();
-    const aiText = data.candidates?.[0]?.content?.parts?.[0]?.text || "I am processing your style request...";
-    res.json({ text: aiText });
-
-  } catch (error: any) {
-    res.status(500).json({ error: "AI System Offline" });
-  }
+    res.json({ text: data.candidates?.[0]?.content?.parts?.[0]?.text || "Processing..." });
+  } catch (error) { res.status(500).json({ error: "AI System Offline" }); }
 });
 
 // =========================================================
-// --- 5. AUTHENTICATION & IDENTITY ---
+// --- 5. AUTHENTICATION ---
 // =========================================================
 
 app.post("/api/auth/sync", async (req, res) => {
   try {
     const { uid, email, displayName, photoURL, isNewUser } = req.body;
-    if (!uid || !email) return res.status(400).json({ success: false });
-    
     const role = (email === "admin@com" || email === process.env.ADMIN_EMAIL) ? "admin" : "user";
-    
     const user = await User.findOneAndUpdate(
       { uid },
       { email: email.toLowerCase(), displayName, photoURL, role, lastLogin: new Date() },
       { upsert: true, new: true }
     );
 
-    // ROOT CAUSE FIX 2: Signature of getSignupEmail only takes (name)
-    if (isNewUser && typeof getSignupEmail === 'function') {
-        const emailHtml = getSignupEmail(displayName || 'Patron');
-        
+    if (isNewUser && EmailUtils.getSignupEmail) {
+        const emailHtml = EmailUtils.getSignupEmail(displayName || 'Patron');
         const transporter = nodemailer.createTransport({
           service: 'gmail',
           auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
         });
-        
         await transporter.sendMail({
-          from: `"DENFIT ATELIER" <${process.env.EMAIL_USER}>`,
+          from: `"DENFIT" <${process.env.EMAIL_USER}>`,
           to: email,
-          subject: "Identity Verified | Welcome to the Inner Circle",
+          subject: "Identity Verified | Welcome to Denfit",
           html: emailHtml
         });
     }
-
     res.json({ success: true, user });
-  } catch (error) {
-    res.status(500).json({ success: false });
-  }
+  } catch (error) { res.status(500).json({ success: false }); }
 });
 
 // =========================================================
@@ -281,9 +246,7 @@ app.get("/api/products", async (req, res) => {
   try {
     const products = await Product.find().sort({ createdAt: -1 });
     res.json(products);
-  } catch (err) {
-    res.status(500).json([]);
-  }
+  } catch (err) { res.status(500).json([]); }
 });
 
 app.post("/api/products/add", async (req, res) => {
@@ -291,76 +254,62 @@ app.post("/api/products/add", async (req, res) => {
     const product = new Product(req.body);
     await product.save();
     res.json({ success: true, product });
-  } catch (err) {
-    res.status(500).json({ success: false });
-  }
+  } catch (err) { res.status(500).json({ success: false }); }
 });
 
 app.delete("/api/products/:id", async (req, res) => {
   try {
     await Product.findByIdAndDelete(req.params.id);
     res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ success: false });
-  }
+  } catch (err) { res.status(500).json({ success: false }); }
 });
 
 // =========================================================
-// --- 7. ORDER & TRANSACTIONAL SYSTEM ---
+// --- 7. ORDERS ---
 // =========================================================
 
 app.post("/api/orders/create", async (req, res) => {
   try {
     const order = new Order(req.body);
     await order.save();
-    
-    // ROOT CAUSE FIX 3: getOrderEmail signature is (name, orderId, total)
-    if (typeof getOrderEmail === 'function') {
-        const emailHtml = getOrderEmail(
-          order.shippingDetails?.firstName || 'Patron', 
-          order._id.toString(), 
-          order.totalAmount.toString()
+
+    if (EmailUtils.getOrderEmail) {
+        const emailHtml = EmailUtils.getOrderEmail(
+            order.shippingDetails?.firstName || 'Patron',
+            order._id.toString(),
+            order.totalAmount.toString()
         );
-        
         const transporter = nodemailer.createTransport({
-          service: 'gmail',
-          auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
+            service: 'gmail',
+            auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
         });
-        
         await transporter.sendMail({
-          from: `"DENFIT ATELIER" <${process.env.EMAIL_USER}>`,
-          to: order.shippingDetails?.email,
-          subject: "Acquisition Secured | Order Confirmation",
-          html: emailHtml
+            from: `"DENFIT" <${process.env.EMAIL_USER}>`,
+            to: order.shippingDetails?.email,
+            subject: "Acquisition Secured | Order Confirmation",
+            html: emailHtml
         });
     }
-
     res.json({ success: true, orderId: order._id });
-  } catch (err) {
-    res.status(500).json({ success: false });
-  }
+  } catch (err) { res.status(500).json({ success: false }); }
 });
 
 app.get("/api/admin/orders", async (req, res) => {
   try {
     const orders = await Order.find().sort({ createdAt: -1 });
     res.json(orders);
-  } catch (err) {
-    res.status(500).json([]);
-  }
+  } catch (err) { res.status(500).json([]); }
 });
 
 // =========================================================
-// --- 8. ADMIN DASHBOARD & ACTIVITY LOGGING ---
+// --- 8. ADMIN DASHBOARD ---
 // =========================================================
 
 app.get("/api/admin/customers", async (req, res) => {
   try {
     const customers = await User.find({ role: "user" }).sort({ createdAt: -1 });
     res.json(customers);
-  } catch (err) {
-    res.status(500).json([]);
-  }
+  } catch (err) { res.status(500).json([]); }
 });
 
 app.post("/api/admin/customers/log", async (req, res) => {
@@ -371,19 +320,14 @@ app.post("/api/admin/customers/log", async (req, res) => {
       { $push: { activity: { action, details, timestamp: new Date() } } }
     );
     res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ success: false });
-  }
+  } catch (err) { res.status(500).json({ success: false }); }
 });
 
 app.post("/api/admin/upload", upload.single('file'), (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ success: false });
-    const fileUrl = `/uploads/${req.file.filename}`;
-    res.json({ success: true, url: fileUrl });
-  } catch (err) {
-    res.status(500).json({ success: false });
-  }
+    res.json({ success: true, url: `/uploads/${req.file.filename}` });
+  } catch (err) { res.status(500).json({ success: false }); }
 });
 
 // =========================================================
@@ -393,29 +337,15 @@ app.post("/api/admin/upload", upload.single('file'), (req, res) => {
 app.get("/api/config", async (req, res) => {
   try {
     const config = await SiteConfig.findOne({ key: "global" });
-    if (!config) {
-        return res.json({ 
-            announcementBar: { mainText: { text: "Welcome to Denfit" } },
-            header: { logoText: { text: "DENFIT" } }
-        });
-    }
-    res.json(config);
-  } catch (err) {
-    res.status(500).json({ error: "Critical Config Error" });
-  }
+    res.json(config || { header: { logoText: { text: "DENFIT" } } });
+  } catch (err) { res.status(500).json({ error: "Config Error" }); }
 });
 
 app.post("/api/config/update", async (req, res) => {
   try {
-    const config = await SiteConfig.findOneAndUpdate(
-      { key: "global" }, 
-      req.body, 
-      { upsert: true, new: true }
-    );
+    const config = await SiteConfig.findOneAndUpdate({ key: "global" }, req.body, { upsert: true, new: true });
     res.json({ success: true, config });
-  } catch (err) {
-    res.status(500).json({ success: false });
-  }
+  } catch (err) { res.status(500).json({ success: false }); }
 });
 
 // =========================================================
@@ -430,26 +360,21 @@ app.post("/api/auth/forgot-password", async (req, res) => {
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     otpStore.set(email, code);
 
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
-    });
-
-    // ROOT CAUSE FIX 4: getOTPEmail signature is (otp)
-    if (typeof getOTPEmail === 'function') {
-        const emailHtml = getOTPEmail(code);
-
+    if (EmailUtils.getOTPEmail) {
+        const emailHtml = EmailUtils.getOTPEmail(code);
+        const transporter = nodemailer.createTransport({
+          service: 'gmail',
+          auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
+        });
         await transporter.sendMail({
-          from: `"DENFIT ATELIER" <${process.env.EMAIL_USER}>`,
+          from: `"DENFIT" <${process.env.EMAIL_USER}>`,
           to: email,
-          subject: "Security Access Key | Vault Recovery",
+          subject: "Security Access Key",
           html: emailHtml
         });
     }
     res.json({ success: true });
-  } catch(err) {
-    res.status(500).json({ error: "Mail Gateway Error" });
-  }
+  } catch(err) { res.status(500).json({ error: "Mail Gateway Error" }); }
 });
 
 app.post("/api/auth/verify-code", (req, res) => {
@@ -457,42 +382,30 @@ app.post("/api/auth/verify-code", (req, res) => {
   if(otpStore.get(email) === code) {
     otpStore.delete(email);
     res.json({ success: true });
-  } else {
-    res.status(400).json({ error: "Invalid Code" });
-  }
+  } else { res.status(400).json({ error: "Invalid Code" }); }
 });
 
 // =========================================================
-// --- 11. GLOBAL SYSTEM HANDLERS ---
+// --- 11. SYSTEM HANDLERS ---
 // =========================================================
 
-app.get("/", (req, res) => {
-    res.status(200).send("DENFIT SOVEREIGN ENGINE IS LIVE");
-});
+app.get("/", (req, res) => { res.status(200).send("DENFIT API ACTIVE"); });
 
 app.use((req: Request, res: Response) => {
     res.status(404).json({ error: `Path ${req.originalUrl} not found.` });
 });
 
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
-  console.error("🚨 SYSTEM FAILURE:", err.stack);
-  res.status(500).json({ 
-      error: "A sovereign system error has occurred.",
-      message: process.env.NODE_ENV === 'development' ? err.message : "Internal server error"
-  });
+  res.status(500).json({ error: "Internal Server Error" });
 });
 
-// =========================================================
-// --- SERVER INITIATION ---
-// =========================================================
-
+// --- DB CONNECTION ---
 const MONGODB_URI = process.env.MONGODB_URI;
-
 if (MONGODB_URI) {
     mongoose.connect(MONGODB_URI)
-      .then(() => console.log("✅ Sovereign Vault Connected (MongoDB)"))
-      .catch(err => console.error("❌ Vault Connection Failed:", err));
+      .then(() => console.log("✅ DB Connected"))
+      .catch(err => console.error("❌ DB Failed", err));
 }
 
-// FINAL EXPORT FOR VERCEL
+// VERCEL EXPORT
 export default app;
