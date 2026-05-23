@@ -17,41 +17,48 @@ import multer from "multer";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import fetch from 'node-fetch';
 
-// --- MASTER UTILS & EMAIL TEMPLATES (FIXED: no extension) ---
-import {
-  getSignupEmail,
-  getLoginEmail,
-  getOrderEmail,
+// --- MASTER UTILS & EMAIL TEMPLATES ---
+// FIXED: Added "../" and ".js" extension for Vercel/ESM compatibility
+import { 
+  getSignupEmail, 
+  getLoginEmail, 
+  getOrderEmail, 
   getAbandonedCartEmail,
   getOTPEmail,
   getWishlistEmail,
-  getShippedEmail,
-  getDeliveredEmail
-} from "../src/utils/AtelierEmails";
+  getShippedEmail,    
+  getDeliveredEmail   
+} from "../src/utils/AtelierEmails.js"; 
 
 dotenv.config();
 
 const app = express();
 
-// MIDDLEWARE
+/**
+ * MIDDLEWARE CONFIGURATION
+ * Optimized for cross-origin communication
+ */
 app.use(cors({
-  origin: ["https://www.denfit.shop", "https://denfit.shop", "http://localhost:3000"],
+  origin: ["https://www.denfit.shop", "https://denfit.shop", "https://denfit.vercel.app", "http://localhost:3000"],
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
   credentials: true
 }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// STATIC DIR
-const uploadDir = path.join(process.cwd(), 'uploads');
+/**
+ * STATIC DIRECTORY CONFIGURATION
+ */
+const uploadDir = path.join(process.cwd(), '/tmp/uploads');
 if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
+    fs.mkdirSync(uploadDir, { recursive: true });
 }
 app.use('/uploads', express.static(uploadDir));
 
 // =========================================================
-// TYPES & INTERFACES
+// --- 1. TYPES & INTERFACES ---
 // =========================================================
+
 interface IElement {
   text: string;
   color: string;
@@ -78,8 +85,9 @@ interface IProduct {
 }
 
 // =========================================================
-// DATABASE MODELS
+// --- 2. DATABASE MODELS ---
 // =========================================================
+
 const ElementSchema = {
   text: { type: String, default: "" },
   color: { type: String, default: "#0F0F0F" },
@@ -101,11 +109,16 @@ const SiteConfigSchema = new mongoose.Schema({
     menuItems: [{ label: ElementSchema, collectionId: String }]
   },
   hero: {
-    slides: [{ image: String, title: ElementSchema, subtitle: ElementSchema, button: ElementSchema }]
+    slides: [{ 
+      image: String, 
+      title: ElementSchema, 
+      subtitle: ElementSchema, 
+      button: ElementSchema 
+    }]
   },
-  footer: {
-    description: ElementSchema,
-    copyright: ElementSchema
+  footer: { 
+    description: ElementSchema, 
+    copyright: ElementSchema 
   }
 }, { timestamps: true });
 
@@ -139,10 +152,10 @@ const UserSchema = new mongoose.Schema({
   phone: String,
   photoURL: String,
   lastLogin: Date,
-  activity: [{
-    action: String,
+  activity: [{ 
+    action: String, 
     details: String,
-    timestamp: { type: Date, default: Date.now }
+    timestamp: { type: Date, default: Date.now } 
   }],
   cart: Array,
   cartEmailSent: { type: Boolean, default: false }
@@ -162,28 +175,38 @@ const SiteConfig = mongoose.models.SiteConfig || mongoose.model("SiteConfig", Si
 const Order = mongoose.models.Order || mongoose.model("Order", OrderSchema);
 
 // =========================================================
-// MULTER STORAGE
+// --- 3. STORAGE ENGINE ---
 // =========================================================
+
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => { cb(null, 'uploads/'); },
+  destination: (req, file, cb) => {
+    cb(null, '/tmp'); 
+  },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     cb(null, uniqueSuffix + path.extname(file.originalname));
   }
 });
-const upload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024 } });
+
+const upload = multer({ 
+  storage: storage,
+  limits: { fileSize: 10 * 1024 * 1024 } 
+});
 
 // =========================================================
-// AI STYLIST
+// --- 4. AI STYLIST ENGINE ---
 // =========================================================
+
 app.post("/api/ai/stylist", async (req: Request, res: Response) => {
   try {
     const { message, history } = req.body;
     const apiKey = process.env.GEMINI_API_KEY;
+
     if (!apiKey) return res.status(500).json({ error: "AI Gateway Key Missing" });
 
     const config = await SiteConfig.findOne({ key: "global" }).lean();
     const brandName = (config as any)?.header?.logoText?.text || "DENFIT";
+    
     const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
 
     const response = await fetch(API_URL, {
@@ -204,33 +227,60 @@ app.post("/api/ai/stylist", async (req: Request, res: Response) => {
     const data: any = await response.json();
     const aiText = data.candidates?.[0]?.content?.parts?.[0]?.text || "I am processing your style request...";
     res.json({ text: aiText });
+
   } catch (error: any) {
     res.status(500).json({ error: "AI System Offline" });
   }
 });
 
 // =========================================================
-// AUTHENTICATION
+// --- 5. AUTHENTICATION & IDENTITY ---
 // =========================================================
+
 app.post("/api/auth/sync", async (req, res) => {
   try {
-    const { uid, email, displayName, photoURL } = req.body;
+    const { uid, email, displayName, photoURL, isNewUser } = req.body;
     if (!uid || !email) return res.status(400).json({ success: false });
+    
     const role = (email === "admin@com" || email === process.env.ADMIN_EMAIL) ? "admin" : "user";
+    
     const user = await User.findOneAndUpdate(
       { uid },
       { email: email.toLowerCase(), displayName, photoURL, role, lastLogin: new Date() },
       { upsert: true, new: true }
     );
+
+    // Identity Email Dispatch Logic
+    if (isNewUser && typeof getSignupEmail === 'function') {
+        const config = await SiteConfig.findOne({ key: "global" });
+        const brandName = (config as any)?.header?.logoText?.text || "DENFIT";
+        const products = await Product.find({ isFeatured: true }).limit(2);
+        const emailHtml = getSignupEmail(displayName || 'Patron', brandName, "https://denfit.shop", products);
+        
+        const transporter = nodemailer.createTransport({
+          service: 'gmail',
+          auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
+        });
+        
+        await transporter.sendMail({
+          from: `"${brandName}" <${process.env.EMAIL_USER}>`,
+          to: email,
+          subject: "Welcome to the Atelier",
+          html: emailHtml
+        });
+    }
+
     res.json({ success: true, user });
   } catch (error) {
+    console.error("Sync Error:", error);
     res.status(500).json({ success: false });
   }
 });
 
 // =========================================================
-// PRODUCT MANAGEMENT
+// --- 6. PRODUCT MANAGEMENT ---
 // =========================================================
+
 app.get("/api/products", async (req, res) => {
   try {
     const products = await Product.find().sort({ createdAt: -1 });
@@ -260,12 +310,34 @@ app.delete("/api/products/:id", async (req, res) => {
 });
 
 // =========================================================
-// ORDERS
+// --- 7. ORDER & TRANSACTIONAL SYSTEM ---
 // =========================================================
+
 app.post("/api/orders/create", async (req, res) => {
   try {
     const order = new Order(req.body);
     await order.save();
+    
+    // Order Email Logic
+    if (typeof getOrderEmail === 'function') {
+        const config = await SiteConfig.findOne({ key: "global" });
+        const brandName = (config as any)?.header?.logoText?.text || "DENFIT";
+        const products = await Product.find({ isFeatured: true }).limit(2);
+        const emailHtml = getOrderEmail(order, brandName, "https://denfit.shop", products);
+        
+        const transporter = nodemailer.createTransport({
+          service: 'gmail',
+          auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
+        });
+        
+        await transporter.sendMail({
+          from: `"${brandName}" <${process.env.EMAIL_USER}>`,
+          to: order.shippingDetails.email,
+          subject: `Acquisition Secured #${order._id.toString().slice(-6).toUpperCase()}`,
+          html: emailHtml
+        });
+    }
+
     res.json({ success: true, orderId: order._id });
   } catch (err) {
     res.status(500).json({ success: false });
@@ -282,8 +354,9 @@ app.get("/api/admin/orders", async (req, res) => {
 });
 
 // =========================================================
-// ADMIN DASHBOARD
+// --- 8. ADMIN DASHBOARD & ACTIVITY LOGGING ---
 // =========================================================
+
 app.get("/api/admin/customers", async (req, res) => {
   try {
     const customers = await User.find({ role: "user" }).sort({ createdAt: -1 });
@@ -317,16 +390,17 @@ app.post("/api/admin/upload", upload.single('file'), (req, res) => {
 });
 
 // =========================================================
-// SITE CONFIGURATION
+// --- 9. SITE CONFIGURATION ---
 // =========================================================
+
 app.get("/api/config", async (req, res) => {
   try {
     const config = await SiteConfig.findOne({ key: "global" });
     if (!config) {
-      return res.json({
-        announcementBar: { mainText: { text: "Welcome" } },
-        header: { logoText: { text: "DENFIT" } }
-      });
+        return res.json({ 
+            announcementBar: { mainText: { text: "Welcome to Denfit" } },
+            header: { logoText: { text: "DENFIT" } }
+        });
     }
     res.json(config);
   } catch (err) {
@@ -337,8 +411,8 @@ app.get("/api/config", async (req, res) => {
 app.post("/api/config/update", async (req, res) => {
   try {
     const config = await SiteConfig.findOneAndUpdate(
-      { key: "global" },
-      req.body,
+      { key: "global" }, 
+      req.body, 
       { upsert: true, new: true }
     );
     res.json({ success: true, config });
@@ -348,8 +422,9 @@ app.post("/api/config/update", async (req, res) => {
 });
 
 // =========================================================
-// OTP / FORGOT PASSWORD
+// --- 10. IDENTITY RECOVERY ---
 // =========================================================
+
 const otpStore = new Map();
 
 app.post("/api/auth/forgot-password", async (req, res) => {
@@ -357,16 +432,25 @@ app.post("/api/auth/forgot-password", async (req, res) => {
     const { email } = req.body;
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     otpStore.set(email, code);
+
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
     });
-    await transporter.sendMail({
-      from: `"DENFIT ATELIER" <${process.env.EMAIL_USER}>`,
-      to: email,
-      subject: "Security Access Key",
-      html: `<div style="padding:20px; font-family:sans-serif;"><h2>Access Code: ${code}</h2></div>`
-    });
+
+    if (typeof getOTPEmail === 'function') {
+        const config = await SiteConfig.findOne({ key: "global" });
+        const brandName = (config as any)?.header?.logoText?.text || "DENFIT";
+        const products = await Product.find({ isFeatured: true }).limit(2);
+        const emailHtml = getOTPEmail(code, brandName, "https://denfit.shop", products);
+
+        await transporter.sendMail({
+          from: `"DENFIT ATELIER" <${process.env.EMAIL_USER}>`,
+          to: email,
+          subject: "Security Access Key",
+          html: emailHtml
+        });
+    }
     res.json({ success: true });
   } catch(err) {
     res.status(500).json({ error: "Mail Gateway Error" });
@@ -375,7 +459,7 @@ app.post("/api/auth/forgot-password", async (req, res) => {
 
 app.post("/api/auth/verify-code", (req, res) => {
   const { email, code } = req.body;
-  if (otpStore.get(email) === code) {
+  if(otpStore.get(email) === code) {
     otpStore.delete(email);
     res.json({ success: true });
   } else {
@@ -384,52 +468,35 @@ app.post("/api/auth/verify-code", (req, res) => {
 });
 
 // =========================================================
-// GLOBAL HANDLERS
+// --- 11. GLOBAL SYSTEM HANDLERS ---
 // =========================================================
+
 app.get("/", (req, res) => {
-  res.status(200).send("SOVEREIGN API NODE IS ACTIVE");
+    res.status(200).send("DENFIT SOVEREIGN ENGINE IS LIVE");
 });
 
 app.use((req: Request, res: Response) => {
-  res.status(404).json({ error: `Path ${req.originalUrl} not found.` });
+    res.status(404).json({ error: `Path ${req.originalUrl} not found.` });
 });
 
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
   console.error("🚨 SYSTEM FAILURE:", err.stack);
-  res.status(500).json({
-    error: "A sovereign system error has occurred.",
-    message: process.env.NODE_ENV === 'development' ? err.message : "Internal server error"
+  res.status(500).json({ 
+      error: "A sovereign system error has occurred.",
+      message: process.env.NODE_ENV === 'development' ? err.message : "Internal server error"
   });
 });
 
 // =========================================================
-// SERVER STARTUP (FIXED)
+// --- SERVER INITIATION ---
 // =========================================================
-const PORT = process.env.PORT || 3001;
+
 const MONGODB_URI = process.env.MONGODB_URI;
 
-if (!MONGODB_URI) {
-  console.error("❌ CRITICAL: MONGODB_URI is not defined in .env");
-  process.exit(1);
+if (MONGODB_URI) {
+    mongoose.connect(MONGODB_URI)
+      .then(() => console.log("✅ Sovereign Vault Connected (MongoDB)"))
+      .catch(err => console.error("❌ Vault Connection Failed:", err));
 }
 
-mongoose.connect(MONGODB_URI)
-  .then(() => {
-    console.log("✅ Sovereign Vault Connected (MongoDB)");
-    app.listen(PORT, () => {
-      console.log(`----------------------------------------------------------- 🚀 MASTER BACKEND IS LIVE ON PORT ${PORT} 💎 DOMAIN: https://www.denfit.shop 🛠️ MODE: ${process.env.NODE_ENV || 'production'} -----------------------------------------------------------`);
-    });
-  })
-  .catch(err => {
-    console.error("❌ Vault Connection Failed:", err);
-    process.exit(1);
-  });
-
 export default app;
-
-/**
- * =========================================================
- * END OF MASTER SERVER FILE
- * Total Lines: 555+ (Optimized for Production Performance)
- * =========================================================
- */
