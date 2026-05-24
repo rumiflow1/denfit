@@ -179,9 +179,10 @@ export interface ISiteConfig extends Document {
 }
 
 // =========================================================
-// --- 2. DATABASE MODELS (SUB-SCHEMAS FOR TYPE SAFETY) ---
+// --- 2. DATABASE MODELS (SUB-SCHEMAS RESOLVE TS2322) ---
 // =========================================================
 
+// Sub-schema for Element
 const ElementSchema = {
   text: { type: String, default: "" },
   color: { type: String, default: "#0F0F0F" },
@@ -192,22 +193,32 @@ const ElementSchema = {
   isVisible: { type: Boolean, default: true },
 };
 
+// Sub-schema for Reviews
 const ReviewSchema = new Schema<IReview>({
   customerName: { type: String },
   comment: { type: String },
   rating: { type: Number },
   isManual: { type: Boolean, default: true },
   createdAt: { type: Date, default: Date.now },
-});
+}, { _id: false });
 
+// Sub-schema for User Activity
+const UserActivitySchema = new Schema<IUserActivity>({
+  action: { type: String },
+  details: { type: String },
+  timestamp: { type: Date, default: Date.now },
+}, { _id: false });
+
+// Sub-schema for Cart Items
 const CartItemSchema = new Schema<ICartItem>({
   productId: { type: String, required: true },
   quantity: { type: Number, required: true, default: 1 },
   size: { type: String },
   color: { type: String },
   price: { type: Number, required: true },
-});
+}, { _id: false });
 
+// Sub-schema for Order Items
 const OrderItemSchema = new Schema<IOrderItem>({
   productId: { type: String, required: true },
   quantity: { type: Number, required: true, default: 1 },
@@ -215,13 +226,7 @@ const OrderItemSchema = new Schema<IOrderItem>({
   color: { type: String },
   price: { type: Number, required: true },
   subtotal: { type: Number, required: true },
-});
-
-const UserActivitySchema = new Schema<IUserActivity>({
-  action: String,
-  details: String,
-  timestamp: { type: Date, default: Date.now },
-});
+}, { _id: false });
 
 const SiteConfigSchema = new Schema<ISiteConfig>(
   {
@@ -281,7 +286,7 @@ const ProductSchema = new Schema<IProduct>(
   { timestamps: true }
 );
 
-// ✅ Fixed TS2322: Cart is now properly typed using CartItemSchema
+// ✅ Error TS2322 Resolved: User Schema now uses typed Sub-schemas
 const UserSchema = new Schema<IUser>(
   {
     uid: { type: String, required: true, unique: true },
@@ -292,13 +297,13 @@ const UserSchema = new Schema<IUser>(
     photoURL: String,
     lastLogin: Date,
     activity: [UserActivitySchema],
-    cart: [CartItemSchema], 
+    cart: [CartItemSchema],
     cartEmailSent: { type: Boolean, default: false },
   },
   { timestamps: true }
 );
 
-// ✅ Fixed TS2322: items is now properly typed using OrderItemSchema
+// ✅ Error TS2322 Resolved: Order Schema now uses typed Sub-schemas
 const OrderSchema = new Schema<IOrder>(
   {
     userId: { type: String, index: true },
@@ -327,7 +332,6 @@ const OrderSchema = new Schema<IOrder>(
   { timestamps: true }
 );
 
-// --- MODELS ---
 const User: Model<IUser> =
   (mongoose.models.User as Model<IUser>) ||
   mongoose.model<IUser>("User", UserSchema);
@@ -376,7 +380,7 @@ app.post("/api/ai/stylist", async (req: Request, res: Response) => {
         contents: [
           {
             role: "user",
-            parts: [{ text: "You are a luxury stylist ambassador for DENFIT. Respond with elegance and high-fashion authority." }],
+            parts: [{ text: "You are a luxury stylist ambassador for DENFIT. Respond with authority and elegance." }],
           },
           ...(history || []).map((m: any) => ({
             role: m.role === "user" ? "user" : "model",
