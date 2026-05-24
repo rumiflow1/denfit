@@ -1,5 +1,5 @@
 import express, { Request, Response, NextFunction } from "express";
-import mongoose, { Schema, Document, Model } from "mongoose";
+import mongoose, { Schema, Document, Model, SchemaDefinitionProperty } from "mongoose";
 import cors from "cors";
 import dotenv from "dotenv";
 import nodemailer from "nodemailer";
@@ -179,7 +179,7 @@ export interface ISiteConfig extends Document {
 }
 
 // =========================================================
-// --- 2. DATABASE MODELS (SUB-SCHEMAS RESOLVE TS2322) ---
+// --- 2. DATABASE MODELS (PERMANENT TS2322 FIX) ---
 // =========================================================
 
 // Sub-schema for Element
@@ -296,12 +296,12 @@ const ProductSchema = new Schema<IProduct>(
     lowStockAlert: { type: Number, default: 5 },
     isNewArrival: { type: Boolean, default: false },
     isFeatured: { type: Boolean, default: false },
-    reviews: { type: [ReviewSchema], default: [] }, // ✅ Fixed: Prevent TS2322
+    reviews: { type: [ReviewSchema], default: () => [] }, // ✅ PERMANENT FIX
   },
   { timestamps: true }
 );
 
-// ✅ Error TS2322 Resolved: UserSchema with typed array
+// ✅ PERMANENT TS2322 FIX: Use default: () => [] for subdocument arrays
 const UserSchema = new Schema<IUser>({
   uid: { type: String, required: true, unique: true },
   email: { type: String, required: true, lowercase: true },
@@ -310,15 +310,15 @@ const UserSchema = new Schema<IUser>({
   phone: String,
   photoURL: String,
   lastLogin: Date,
-  activity: { type: [UserActivitySchema], default: [] }, // ✅ Fixed
-  cart: { type: [CartItemSchema], default: [] },         // ✅ Fixed
+  activity: { type: [UserActivitySchema], default: () => [] }, // ✅ FIXED
+  cart: { type: [CartItemSchema], default: () => [] },         // ✅ FIXED
   cartEmailSent: { type: Boolean, default: false },
 }, { timestamps: true });
 
-// ✅ Error TS2322 Resolved: OrderSchema with typed array
+// ✅ PERMANENT TS2322 FIX: Use default: () => [] for subdocument arrays
 const OrderSchema = new Schema<IOrder>({
   userId: { type: String, index: true },
-  items: { type: [OrderItemSchema], default: [] }, // ✅ Fixed
+  items: { type: [OrderItemSchema], default: () => [] }, // ✅ FIXED
   totalAmount: { type: Number, required: true, default: 0 },
   status: {
     type: String,
@@ -341,7 +341,7 @@ const OrderSchema = new Schema<IOrder>({
   },
 }, { timestamps: true });
 
-// ✅ Strongly typed models (no union type issues)
+// ✅ Strongly typed models
 const User: Model<IUser> =
   (mongoose.models.User as Model<IUser>) ||
   mongoose.model<IUser>("User", UserSchema);
@@ -373,7 +373,7 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 // =========================================================
-// --- 4. AI STYLIST ENGINE (Enhanced, fully functional) ---
+// --- 4. AI STYLIST ENGINE ---
 // =========================================================
 
 app.post("/api/ai/stylist", async (req: Request, res: Response) => {
@@ -418,7 +418,7 @@ app.post("/api/ai/stylist", async (req: Request, res: Response) => {
 });
 
 // =========================================================
-// --- 5. AUTHENTICATION & IDENTITY (Unchanged, fully functional) ---
+// --- 5. AUTHENTICATION & IDENTITY ---
 // =========================================================
 
 app.post("/api/auth/sync", async (req: Request, res: Response) => {
@@ -474,7 +474,7 @@ app.post("/api/auth/sync", async (req: Request, res: Response) => {
 });
 
 // =========================================================
-// --- 6. PRODUCT MANAGEMENT (Unchanged, fully functional) ---
+// --- 6. PRODUCT MANAGEMENT ---
 // =========================================================
 
 app.get("/api/products", async (req: Request, res: Response) => {
@@ -509,7 +509,7 @@ app.delete("/api/products/:id", async (req: Request, res: Response) => {
 });
 
 // =========================================================
-// --- 7. ORDER SYSTEM (Enhanced, fully functional) ---
+// --- 7. ORDER SYSTEM ---
 // =========================================================
 
 app.post("/api/orders/create", async (req: Request, res: Response) => {
@@ -563,7 +563,6 @@ app.get("/api/admin/orders", async (req: Request, res: Response) => {
   }
 });
 
-// ✅ Additional order status update (enhanced, non‑breaking)
 app.patch("/api/orders/:id/status", async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
@@ -592,7 +591,7 @@ app.patch("/api/orders/:id/status", async (req: Request, res: Response) => {
 });
 
 // =========================================================
-// --- 8. ADMIN & LOGS (Unchanged, fully functional) ---
+// --- 8. ADMIN & LOGS ---
 // =========================================================
 
 app.get("/api/admin/customers", async (req: Request, res: Response) => {
@@ -636,7 +635,7 @@ app.post(
 );
 
 // =========================================================
-// --- 9. SITE CONFIGURATION (Enhanced, fully functional) ---
+// --- 9. SITE CONFIGURATION ---
 // =========================================================
 
 app.get("/api/health", (req: Request, res: Response) => {
@@ -672,7 +671,7 @@ app.post("/api/config/update", async (req: Request, res: Response) => {
 });
 
 // =========================================================
-// --- 10. IDENTITY RECOVERY (Unchanged, fully functional) ---
+// --- 10. IDENTITY RECOVERY ---
 // =========================================================
 
 const otpStore = new Map<string, string>();
@@ -714,7 +713,7 @@ app.post("/api/auth/verify-code", (req: Request, res: Response) => {
   }
 });
 
-// --- DISPATCH OTHER EMAILS (Unchanged, fully functional) ---
+// --- DISPATCH OTHER EMAILS ---
 app.post(
   "/api/orchestrate/dispatch-email",
   async (req: Request, res: Response) => {
