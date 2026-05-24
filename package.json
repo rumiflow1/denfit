@@ -4,8 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx api/index.ts",
-    "build": "echo 'No build needed'",
-    "start": "node api/index.ts"
+    "build": "tsc -p .",
+    "start": "node api/index.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
@@ -21,6 +21,7 @@
   },
   "devDependencies": {
     "@types/multer": "^2.1.0",
-    "@types/node": "^25.6.0"
+    "@types/node": "^25.6.0",
+    "typescript": "^5.9.3"
   }
 }
