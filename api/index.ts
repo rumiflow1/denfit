@@ -1,6 +1,6 @@
 /**
  * =========================================================
- * SOVEREIGN MASTER BACKEND ENGINE - VERSION 6.9
+ * SOVEREIGN MASTER BACKEND ENGINE - VERSION 7.0
  * PROJECT: DENFIT ATELIER (RUMI-FLOW)
  * STATUS: PRODUCTION READY (DOMAIN: denfit.shop)
  * =========================================================
@@ -18,9 +18,17 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import fetch from 'node-fetch';
 
 // --- MASTER UTILS & EMAIL TEMPLATES ---
-// ROOT CAUSE FIX: Using Namespace Import (*) to fix TS2349 "Not Callable" error
-// Added ".js" to fix TS2835 ESM resolution error
-import * as EmailUtils from "../src/utils/AtelierEmails.js"; 
+// FIX TS2835: Added .js extension
+import { 
+  getSignupEmail, 
+  getLoginEmail, 
+  getOrderEmail, 
+  getAbandonedCartEmail,
+  getOTPEmail,
+  getWishlistEmail,
+  getShippedEmail,    
+  getDeliveredEmail   
+} from "../src/utils/AtelierEmails.js"; 
 
 dotenv.config();
 
@@ -208,12 +216,14 @@ app.post("/api/ai/stylist", async (req: Request, res: Response) => {
 });
 
 // =========================================================
-// --- 5. AUTHENTICATION ---
+// --- 5. AUTHENTICATION & IDENTITY ---
 // =========================================================
 
 app.post("/api/auth/sync", async (req, res) => {
   try {
     const { uid, email, displayName, photoURL, isNewUser } = req.body;
+    if (!uid || !email) return res.status(400).json({ success: false });
+    
     const role = (email === "admin@com" || email === process.env.ADMIN_EMAIL) ? "admin" : "user";
     const user = await User.findOneAndUpdate(
       { uid },
@@ -221,8 +231,9 @@ app.post("/api/auth/sync", async (req, res) => {
       { upsert: true, new: true }
     );
 
-    if (isNewUser && EmailUtils.getSignupEmail) {
-        const emailHtml = EmailUtils.getSignupEmail(displayName || 'Patron');
+    // FIX TS2349: Calling with 1 argument as defined in your AtelierEmails.ts
+    if (isNewUser) {
+        const emailHtml = getSignupEmail(displayName || 'Patron');
         const transporter = nodemailer.createTransport({
           service: 'gmail',
           auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
@@ -230,10 +241,24 @@ app.post("/api/auth/sync", async (req, res) => {
         await transporter.sendMail({
           from: `"DENFIT" <${process.env.EMAIL_USER}>`,
           to: email,
-          subject: "Identity Verified | Welcome to Denfit",
+          subject: "Welcome to the Inner Circle",
+          html: emailHtml
+        });
+    } else {
+        // Login Email (takes 1 arg: name)
+        const emailHtml = getLoginEmail(displayName || 'Patron');
+        const transporter = nodemailer.createTransport({
+          service: 'gmail',
+          auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
+        });
+        await transporter.sendMail({
+          from: `"DENFIT Security" <${process.env.EMAIL_USER}>`,
+          to: email,
+          subject: "Sovereign Access Detected",
           html: emailHtml
         });
     }
+
     res.json({ success: true, user });
   } catch (error) { res.status(500).json({ success: false }); }
 });
@@ -265,7 +290,7 @@ app.delete("/api/products/:id", async (req, res) => {
 });
 
 // =========================================================
-// --- 7. ORDERS ---
+// --- 7. ORDER SYSTEM ---
 // =========================================================
 
 app.post("/api/orders/create", async (req, res) => {
@@ -273,23 +298,24 @@ app.post("/api/orders/create", async (req, res) => {
     const order = new Order(req.body);
     await order.save();
 
-    if (EmailUtils.getOrderEmail) {
-        const emailHtml = EmailUtils.getOrderEmail(
-            order.shippingDetails?.firstName || 'Patron',
-            order._id.toString(),
-            order.totalAmount.toString()
-        );
-        const transporter = nodemailer.createTransport({
-            service: 'gmail',
-            auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
-        });
-        await transporter.sendMail({
-            from: `"DENFIT" <${process.env.EMAIL_USER}>`,
-            to: order.shippingDetails?.email,
-            subject: "Acquisition Secured | Order Confirmation",
-            html: emailHtml
-        });
-    }
+    // FIX TS2349: getOrderEmail takes (name, orderId, total)
+    const emailHtml = getOrderEmail(
+        order.shippingDetails?.firstName || 'Patron',
+        order._id.toString(),
+        order.totalAmount.toString()
+    );
+
+    const transporter = nodemailer.createTransport({
+        service: 'gmail',
+        auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
+    });
+    await transporter.sendMail({
+        from: `"DENFIT" <${process.env.EMAIL_USER}>`,
+        to: order.shippingDetails?.email,
+        subject: "Acquisition Secured",
+        html: emailHtml
+    });
+
     res.json({ success: true, orderId: order._id });
   } catch (err) { res.status(500).json({ success: false }); }
 });
@@ -302,7 +328,7 @@ app.get("/api/admin/orders", async (req, res) => {
 });
 
 // =========================================================
-// --- 8. ADMIN DASHBOARD ---
+// --- 8. ADMIN & LOGS ---
 // =========================================================
 
 app.get("/api/admin/customers", async (req, res) => {
@@ -360,19 +386,18 @@ app.post("/api/auth/forgot-password", async (req, res) => {
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     otpStore.set(email, code);
 
-    if (EmailUtils.getOTPEmail) {
-        const emailHtml = EmailUtils.getOTPEmail(code);
-        const transporter = nodemailer.createTransport({
-          service: 'gmail',
-          auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
-        });
-        await transporter.sendMail({
-          from: `"DENFIT" <${process.env.EMAIL_USER}>`,
-          to: email,
-          subject: "Security Access Key",
-          html: emailHtml
-        });
-    }
+    // FIX TS2349: getOTPEmail takes (otp)
+    const emailHtml = getOTPEmail(code);
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
+    });
+    await transporter.sendMail({
+      from: `"DENFIT" <${process.env.EMAIL_USER}>`,
+      to: email,
+      subject: "Security Access Key",
+      html: emailHtml
+    });
     res.json({ success: true });
   } catch(err) { res.status(500).json({ error: "Mail Gateway Error" }); }
 });
@@ -385,8 +410,30 @@ app.post("/api/auth/verify-code", (req, res) => {
   } else { res.status(400).json({ error: "Invalid Code" }); }
 });
 
+// --- DISPATCH OTHER EMAILS (TS2349 Fixes) ---
+app.post("/api/orchestrate/dispatch-email", async (req, res) => {
+  try {
+    const { email, displayName, actionType, orderId } = req.body;
+    let html = "";
+    if (actionType === 'ABANDONED_CART') html = getAbandonedCartEmail(displayName || 'Patron');
+    else if (actionType === 'SHIPPED') html = getShippedEmail(displayName || 'Patron', orderId || 'N/A');
+    
+    const transporter = nodemailer.createTransport({
+        service: 'gmail',
+        auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
+    });
+    await transporter.sendMail({
+        from: `"DENFIT" <${process.env.EMAIL_USER}>`,
+        to: email,
+        subject: "Editorial Update",
+        html: html
+    });
+    res.json({ success: true });
+  } catch (error) { res.status(500).json({ error: "Dispatch failed" }); }
+});
+
 // =========================================================
-// --- 11. SYSTEM HANDLERS ---
+// --- 11. GLOBAL HANDLERS ---
 // =========================================================
 
 app.get("/", (req, res) => { res.status(200).send("DENFIT API ACTIVE"); });
