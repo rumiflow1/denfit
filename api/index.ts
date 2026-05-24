@@ -9,7 +9,6 @@ import multer from "multer";
 import fetch from "node-fetch";
 
 // --- MASTER UTILS & EMAIL TEMPLATES ---
-// IMPORTANT: this path must match the built JS location at runtime
 import {
   getSignupEmail,
   getLoginEmail,
@@ -110,7 +109,6 @@ export interface IUser extends Document {
 }
 
 interface IOrderItem {
-  // define shape if you know it
   [key: string]: any;
 }
 
@@ -204,6 +202,7 @@ const ProductSchema = new Schema<IProduct>(
   { timestamps: true }
 );
 
+// ✅ Fix TS2322: Use Schema.Types.Mixed instead of type: Array
 const UserSchema = new Schema<IUser>(
   {
     uid: { type: String, required: true, unique: true },
@@ -220,16 +219,17 @@ const UserSchema = new Schema<IUser>(
         timestamp: { type: Date, default: Date.now },
       },
     ],
-    cart: { type: Array, default: [] },
+    cart: { type: [Schema.Types.Mixed], default: [] },
     cartEmailSent: { type: Boolean, default: false },
   },
   { timestamps: true }
 );
 
+// ✅ Fix TS2322: Use Schema.Types.Mixed instead of type: Array
 const OrderSchema = new Schema<IOrder>(
   {
     userId: String,
-    items: { type: Array, default: [] },
+    items: { type: [Schema.Types.Mixed], default: [] },
     totalAmount: { type: Number, required: true },
     status: { type: String, default: "Pending" },
     shippingDetails: Object,
@@ -237,7 +237,7 @@ const OrderSchema = new Schema<IOrder>(
   { timestamps: true }
 );
 
-// Explicitly type models to avoid TS2349 union issues
+// Explicitly type models to avoid any remaining Mongoose+TS type issues
 const User: Model<IUser> =
   (mongoose.models.User as Model<IUser>) ||
   mongoose.model<IUser>("User", UserSchema);
@@ -592,7 +592,6 @@ app.use((req: Request, res: Response) => {
 
 app.use(
   (err: any, req: Request, res: Response, next: NextFunction) => {
-    // eslint-disable-next-line no-console
     console.error(err);
     res.status(500).json({ error: "Internal Server Error" });
   }
