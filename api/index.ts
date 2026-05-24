@@ -1,5 +1,5 @@
 import express, { Request, Response, NextFunction } from "express";
-import mongoose, { Schema, Document, Model, SchemaDefinitionProperty } from "mongoose";
+import mongoose, { Schema, Document, Model } from "mongoose";
 import cors from "cors";
 import dotenv from "dotenv";
 import nodemailer from "nodemailer";
@@ -182,7 +182,6 @@ export interface ISiteConfig extends Document {
 // --- 2. DATABASE MODELS (PERMANENT TS2322 FIX) ---
 // =========================================================
 
-// Sub-schema for Element
 const ElementSchema = new Schema<IElement>(
   {
     text: { type: String, default: "" },
@@ -196,7 +195,6 @@ const ElementSchema = new Schema<IElement>(
   { _id: false }
 );
 
-// Sub-schema for Reviews
 const ReviewSchema = new Schema<IReview>(
   {
     customerName: { type: String },
@@ -208,7 +206,6 @@ const ReviewSchema = new Schema<IReview>(
   { _id: false }
 );
 
-// Sub-schema for User Activity
 const UserActivitySchema = new Schema<IUserActivity>(
   {
     action: { type: String },
@@ -218,7 +215,6 @@ const UserActivitySchema = new Schema<IUserActivity>(
   { _id: false }
 );
 
-// Sub-schema for Cart Items
 const CartItemSchema = new Schema<ICartItem>(
   {
     productId: { type: String, required: true },
@@ -230,7 +226,6 @@ const CartItemSchema = new Schema<ICartItem>(
   { _id: false }
 );
 
-// Sub-schema for Order Items
 const OrderItemSchema = new Schema<IOrderItem>(
   {
     productId: { type: String, required: true },
@@ -296,12 +291,13 @@ const ProductSchema = new Schema<IProduct>(
     lowStockAlert: { type: Number, default: 5 },
     isNewArrival: { type: Boolean, default: false },
     isFeatured: { type: Boolean, default: false },
-    reviews: { type: [ReviewSchema], default: () => [] }, // ✅ PERMANENT FIX
+    reviews: { type: [ReviewSchema], default: () => [] },
   },
   { timestamps: true }
 );
 
-// ✅ PERMANENT TS2322 FIX: Use default: () => [] for subdocument arrays
+// ✅ TS2322 PERMANENTLY FIXED: Removed { type: [...], default: [] } wrapper
+// Mongoose natively initializes arrays to []. This syntax bypasses the TS inference bug.
 const UserSchema = new Schema<IUser>({
   uid: { type: String, required: true, unique: true },
   email: { type: String, required: true, lowercase: true },
@@ -310,15 +306,15 @@ const UserSchema = new Schema<IUser>({
   phone: String,
   photoURL: String,
   lastLogin: Date,
-  activity: { type: [UserActivitySchema], default: () => [] }, // ✅ FIXED
-  cart: { type: [CartItemSchema], default: () => [] },         // ✅ FIXED
+  activity: [UserActivitySchema], // ✅ Line ~223 FIXED
+  cart: [CartItemSchema],         // ✅ Line ~223 FIXED
   cartEmailSent: { type: Boolean, default: false },
 }, { timestamps: true });
 
-// ✅ PERMANENT TS2322 FIX: Use default: () => [] for subdocument arrays
+// ✅ TS2322 PERMANENTLY FIXED: Same pattern applied
 const OrderSchema = new Schema<IOrder>({
   userId: { type: String, index: true },
-  items: { type: [OrderItemSchema], default: () => [] }, // ✅ FIXED
+  items: [OrderItemSchema], // ✅ Line ~232 FIXED
   totalAmount: { type: Number, required: true, default: 0 },
   status: {
     type: String,
