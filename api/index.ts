@@ -89,14 +89,12 @@ export interface IProduct extends Document {
   reviews: IReview[];
 }
 
-// ✅ Enhanced: more explicit for cart items (type as array of objects)
 interface ICartItem {
   productId: string;
   quantity: number;
   size?: string;
   color?: string;
   price: number;
-  [key: string]: any; // optional extra fields
 }
 
 interface IUserActivity {
@@ -118,7 +116,6 @@ export interface IUser extends Document {
   cartEmailSent: boolean;
 }
 
-// ✅ Enhanced: more explicit for order items (type as array of objects)
 interface IOrderItem {
   productId: string;
   quantity: number;
@@ -126,7 +123,6 @@ interface IOrderItem {
   color?: string;
   price: number;
   subtotal: number;
-  [key: string]: any;
 }
 
 export interface IOrder extends Document {
@@ -147,7 +143,6 @@ export interface IOrder extends Document {
       postalCode: string;
       country: string;
     };
-    [key: string]: any;
   };
 }
 
@@ -184,7 +179,7 @@ export interface ISiteConfig extends Document {
 }
 
 // =========================================================
-// --- 2. DATABASE MODELS ---
+// --- 2. DATABASE MODELS (SUB-SCHEMAS FOR TYPE SAFETY) ---
 // =========================================================
 
 const ElementSchema = {
@@ -196,6 +191,37 @@ const ElementSchema = {
   bgColor: { type: String, default: "" },
   isVisible: { type: Boolean, default: true },
 };
+
+const ReviewSchema = new Schema<IReview>({
+  customerName: { type: String },
+  comment: { type: String },
+  rating: { type: Number },
+  isManual: { type: Boolean, default: true },
+  createdAt: { type: Date, default: Date.now },
+});
+
+const CartItemSchema = new Schema<ICartItem>({
+  productId: { type: String, required: true },
+  quantity: { type: Number, required: true, default: 1 },
+  size: { type: String },
+  color: { type: String },
+  price: { type: Number, required: true },
+});
+
+const OrderItemSchema = new Schema<IOrderItem>({
+  productId: { type: String, required: true },
+  quantity: { type: Number, required: true, default: 1 },
+  size: { type: String },
+  color: { type: String },
+  price: { type: Number, required: true },
+  subtotal: { type: Number, required: true },
+});
+
+const UserActivitySchema = new Schema<IUserActivity>({
+  action: String,
+  details: String,
+  timestamp: { type: Date, default: Date.now },
+});
 
 const SiteConfigSchema = new Schema<ISiteConfig>(
   {
@@ -250,20 +276,12 @@ const ProductSchema = new Schema<IProduct>(
     lowStockAlert: { type: Number, default: 5 },
     isNewArrival: { type: Boolean, default: false },
     isFeatured: { type: Boolean, default: false },
-    reviews: [
-      {
-        customerName: { type: String },
-        comment: { type: String },
-        rating: { type: Number },
-        isManual: { type: Boolean, default: true },
-        createdAt: { type: Date, default: Date.now },
-      },
-    ],
+    reviews: [ReviewSchema],
   },
   { timestamps: true }
 );
 
-// ✅ Fully fixed TS2322: `cart` now properly typed as array of objects
+// ✅ Fixed TS2322: Cart is now properly typed using CartItemSchema
 const UserSchema = new Schema<IUser>(
   {
     uid: { type: String, required: true, unique: true },
@@ -273,37 +291,18 @@ const UserSchema = new Schema<IUser>(
     phone: String,
     photoURL: String,
     lastLogin: Date,
-    activity: [
-      {
-        action: String,
-        details: String,
-        timestamp: { type: Date, default: Date.now },
-      },
-    ],
-    // ✅ Error fixed: use [Schema.Types.Mixed] or just array type
-    // Since TypeScript already knows `cart: ICartItem[]`, we can just:
-    cart: [{ type: Schema.Types.Mixed, default: {} }],
+    activity: [UserActivitySchema],
+    cart: [CartItemSchema], 
     cartEmailSent: { type: Boolean, default: false },
   },
   { timestamps: true }
 );
 
-// ✅ Fully fixed TS2322: `items` now properly typed as array of objects
+// ✅ Fixed TS2322: items is now properly typed using OrderItemSchema
 const OrderSchema = new Schema<IOrder>(
   {
     userId: { type: String, index: true },
-    // ✅ Error fixed: define items as Schema.Types.Mixed array
-    items: [
-      {
-        productId: { type: String, required: true },
-        quantity: { type: Number, required: true, default: 1 },
-        size: { type: String },
-        color: { type: String },
-        price: { type: Number, required: true },
-        subtotal: { type: Number, required: true },
-        [Schema.Types.Mixed]: true,
-      },
-    ],
+    items: [OrderItemSchema],
     totalAmount: { type: Number, required: true, default: 0 },
     status: {
       type: String,
@@ -328,7 +327,7 @@ const OrderSchema = new Schema<IOrder>(
   { timestamps: true }
 );
 
-// ✅ Explicit typing to avoid any Mongoose union type issues
+// --- MODELS ---
 const User: Model<IUser> =
   (mongoose.models.User as Model<IUser>) ||
   mongoose.model<IUser>("User", UserSchema);
@@ -360,7 +359,7 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 // =========================================================
-// --- 4. AI STYLIST ENGINE (Enhanced) ---
+// --- 4. AI STYLIST ENGINE ---
 // =========================================================
 
 app.post("/api/ai/stylist", async (req: Request, res: Response) => {
@@ -377,7 +376,7 @@ app.post("/api/ai/stylist", async (req: Request, res: Response) => {
         contents: [
           {
             role: "user",
-            parts: [{ text: "You are a luxury stylist ambassador for DENFIT." }],
+            parts: [{ text: "You are a luxury stylist ambassador for DENFIT. Respond with elegance and high-fashion authority." }],
           },
           ...(history || []).map((m: any) => ({
             role: m.role === "user" ? "user" : "model",
@@ -405,7 +404,7 @@ app.post("/api/ai/stylist", async (req: Request, res: Response) => {
 });
 
 // =========================================================
-// --- 5. AUTHENTICATION & IDENTITY (Unchanged, Fully Functional) ---
+// --- 5. AUTHENTICATION & IDENTITY ---
 // =========================================================
 
 app.post("/api/auth/sync", async (req: Request, res: Response) => {
@@ -461,7 +460,7 @@ app.post("/api/auth/sync", async (req: Request, res: Response) => {
 });
 
 // =========================================================
-// --- 6. PRODUCT MANAGEMENT (Unchanged, Fully Functional) ---
+// --- 6. PRODUCT MANAGEMENT ---
 // =========================================================
 
 app.get("/api/products", async (req: Request, res: Response) => {
@@ -496,19 +495,19 @@ app.delete("/api/products/:id", async (req: Request, res: Response) => {
 });
 
 // =========================================================
-// --- 7. ORDER SYSTEM (Enhanced, Fully Functional) ---
+// --- 7. ORDER SYSTEM ---
 // =========================================================
 
 app.post("/api/orders/create", async (req: Request, res: Response) => {
   try {
-    const { items, totalAmount, shippingDetails } = req.body;
+    const { items, totalAmount, shippingDetails, userId } = req.body;
 
-    // ✅ Extra validation (optional, but safer)
     if (!items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: "Missing or invalid items" });
     }
 
     const order = new Order({
+      userId,
       items,
       totalAmount,
       shippingDetails,
@@ -550,7 +549,6 @@ app.get("/api/admin/orders", async (req: Request, res: Response) => {
   }
 });
 
-// ✅ Enhanced: order status update (Vercel‑friendly)
 app.patch("/api/orders/:id/status", async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
@@ -579,7 +577,7 @@ app.patch("/api/orders/:id/status", async (req: Request, res: Response) => {
 });
 
 // =========================================================
-// --- 8. ADMIN & LOGS (Unchanged, Fully Functional) ---
+// --- 8. ADMIN & LOGS ---
 // =========================================================
 
 app.get("/api/admin/customers", async (req: Request, res: Response) => {
@@ -623,10 +621,9 @@ app.post(
 );
 
 // =========================================================
-// --- 9. SITE CONFIGURATION (Enhanced, Fully Functional) ---
+// --- 9. SITE CONFIGURATION ---
 // =========================================================
 
-// ✅ Add a basic /health check for Vercel monitoring
 app.get("/api/health", (req: Request, res: Response) => {
   res.status(200).json({ status: "OK", db: mongoose.connection.readyState });
 });
@@ -660,7 +657,7 @@ app.post("/api/config/update", async (req: Request, res: Response) => {
 });
 
 // =========================================================
-// --- 10. IDENTITY RECOVERY (Unchanged, Fully Functional) ---
+// --- 10. IDENTITY RECOVERY ---
 // =========================================================
 
 const otpStore = new Map<string, string>();
@@ -702,7 +699,7 @@ app.post("/api/auth/verify-code", (req: Request, res: Response) => {
   }
 });
 
-// --- DISPATCH OTHER EMAILS (Unchanged, Fully Functional) ---
+// --- DISPATCH OTHER EMAILS ---
 app.post(
   "/api/orchestrate/dispatch-email",
   async (req: Request, res: Response) => {
