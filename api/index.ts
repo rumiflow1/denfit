@@ -306,7 +306,7 @@ const UserSchema = new Schema<IUser>({
   phone: String,
   photoURL: String,
   lastLogin: Date,
-  activity: [UserActivitySchema], // ✅ Line ~223 FIXED
+  activity: { type: [UserActivitySchema], default: () => [] },
   cart: [CartItemSchema],         // ✅ Line ~223 FIXED
   cartEmailSent: { type: Boolean, default: false },
 }, { timestamps: true });
@@ -314,7 +314,7 @@ const UserSchema = new Schema<IUser>({
 // ✅ TS2322 PERMANENTLY FIXED: Same pattern applied
 const OrderSchema = new Schema<IOrder>({
   userId: { type: String, index: true },
-  items: [OrderItemSchema], // ✅ Line ~232 FIXED
+  items: { type: [OrderItemSchema], default: () => [] },
   totalAmount: { type: Number, required: true, default: 0 },
   status: {
     type: String,
