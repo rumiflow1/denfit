@@ -298,44 +298,49 @@ const ProductSchema = new Schema<IProduct>(
 
 // ✅ TS2322 PERMANENTLY FIXED: Removed { type: [...], default: [] } wrapper
 // Mongoose natively initializes arrays to []. This syntax bypasses the TS inference bug.
-const UserSchema = new Schema<IUser>({
-  uid: { type: String, required: true, unique: true },
-  email: { type: String, required: true, lowercase: true },
-  displayName: String,
-  role: { type: String, enum: ["user", "admin"], default: "user" },
-  phone: String,
-  photoURL: String,
-  lastLogin: Date,
-  activity: { type: [UserActivitySchema], default: () => [] },
-  cart: [CartItemSchema],         // ✅ Line ~223 FIXED
-  cartEmailSent: { type: Boolean, default: false },
-}, { timestamps: true });
-
-// ✅ TS2322 PERMANENTLY FIXED: Same pattern applied
-const OrderSchema = new Schema<IOrder>({
-  userId: { type: String, index: true },
-  items: { type: [OrderItemSchema], default: () => [] },
-  totalAmount: { type: Number, required: true, default: 0 },
-  status: {
-    type: String,
-    enum: ["Pending", "Confirmed", "Shipped", "Delivered", "Cancelled"],
-    default: "Pending",
+const UserSchema = new Schema<IUser>(
+  {
+    uid: { type: String, required: true, unique: true },
+    email: { type: String, required: true, lowercase: true },
+    displayName: { type: String },
+    role: { type: String, enum: ["user", "admin"], default: "user" },
+    phone: { type: String },
+    photoURL: { type: String },
+    lastLogin: { type: Date },
+    activity: { type: [UserActivitySchema], default: () => [] },
+    cart: { type: [CartItemSchema], default: () => [] },  // ✅ Line 223 - FIXED
+    cartEmailSent: { type: Boolean, default: false },
   },
-  shippingDetails: {
-    firstName: String,
-    lastName: String,
-    email: String,
-    phone: String,
-    address: {
-      line1: String,
-      line2: String,
-      city: String,
-      state: String,
-      postalCode: String,
-      country: String,
+  { timestamps: true }
+);
+// ✅ TS2322 PERMANENTLY FIXED: Same pattern applied
+const OrderSchema = new Schema<IOrder>(
+  {
+    userId: { type: String, index: true },
+    items: { type: [OrderItemSchema], default: () => [] },  // ✅ Line 232 - FIXED
+    totalAmount: { type: Number, required: true, default: 0 },
+    status: {
+      type: String,
+      enum: ["Pending", "Confirmed", "Shipped", "Delivered", "Cancelled"],
+      default: "Pending",
+    },
+    shippingDetails: {
+      firstName: { type: String },
+      lastName: { type: String },
+      email: { type: String },
+      phone: { type: String },
+      address: {
+        line1: { type: String },
+        line2: { type: String },
+        city: { type: String },
+        state: { type: String },
+        postalCode: { type: String },
+        country: { type: String },
+      },
     },
   },
-}, { timestamps: true });
+  { timestamps: true }
+);
 
 // ✅ Strongly typed models
 const User: Model<IUser> =
