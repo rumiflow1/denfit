@@ -3,8 +3,7 @@
   "functions": {
     "api/index.ts": {
       "runtime": "vercel-node@latest",
-      "memory": 1024,
-      "maxDuration": 10
+      "memory": 1024
     }
   },
   "routes": [
