@@ -5,7 +5,7 @@
   "main": "api/index.ts",
   "scripts": {
     "dev": "tsx api/index.ts",
-    "build": "tsc -p . && echo 'Build complete'",
+    "build": "tsc -p .",
     "start": "node api/index.js"
   },
   "dependencies": {
