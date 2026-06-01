@@ -1,19 +1,13 @@
 {
   "version": 2,
-  "functions": {
-    "api/index.ts": {
-      "runtime": "vercel-node@latest",
-      "memory": 1024
-    }
-  },
-  "routes": [
+  "rewrites": [
     {
-      "src": "/api/(.*)",
-      "dest": "/api/index.ts"
+      "source": "/api/(.*)",
+      "destination": "/api/index.ts"
     },
     {
-      "src": "/(.*)",
-      "dest": "/api/index.ts"
+      "source": "/(.*)",
+      "destination": "/api/index.ts"
     }
   ]
 }
