@@ -779,12 +779,15 @@ if (MONGODB_URI) {
     .catch((err) => console.error("❌ DB Failed", err));
 }
 
-// ✅ VERCEL EXPORT - Fixed for serverless
-// Start server locally (when running with npm start)
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+// ✅ VERCEL EXPORT & SERVER START
+// This works for both local development and Vercel serverless
+if (process.env.VERCEL_ENV !== "production") {
+  // Local development: start server
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => {
+    console.log(`🚀 Server running on http://localhost:${PORT}`);
+  });
+}
 
 // ✅ Default export for Vercel serverless functions
 export default app;

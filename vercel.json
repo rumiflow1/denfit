@@ -1,15 +1,17 @@
 {
   "version": 2,
-  "builds": [
-    {
-      "src": "api/index.ts",
-      "use": "@vercel/node"
+  "buildCommand": "npm run build",
+  "outputDirectory": ".",
+  "functions": {
+    "api/index.ts": {
+      "runtime": "nodejs18.x"
     }
-  ],
-  "rewrites": [
+  },
+  "routes": [
     {
-      "source": "/api/(.*)",
-      "destination": "api/index.ts"
+      "src": "^/api/(.*)$",
+      "dest": "/api/index.ts",
+      "methods": ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
     }
   ]
 }
