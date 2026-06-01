@@ -8,10 +8,6 @@
     "strict": true,
     "skipLibCheck": true,
     "outDir": "dist",
-    "baseUrl": ".",
-    "paths": {
-      "*": ["node_modules/*"]
-    },
     "allowJs": true,
     "resolveJsonModule": true
   },
