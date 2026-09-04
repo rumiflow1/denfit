@@ -6,81 +6,23 @@ import nodemailer from "nodemailer";
 import path from "path";
 import fs from "fs";
 import multer from "multer";
-import fetch from "node-fetch";
+
+// --- MASTER UTILS & EMAIL TEMPLATES ---
+import {
+  getSignupEmail,
+  getLoginEmail,
+  getOrderEmail,
+  getAbandonedCartEmail,
+  getOTPEmail,
+  getWishlistEmail,
+  getShippedEmail,
+  getDeliveredEmail,
+} from "../src/utils/AtelierEmails.js";
+import { OrderSchema } from "../src/models/MasterModels.js";
 
 dotenv.config();
 
 const app = express();
-
-// =========================================================
-// --- INLINE EMAIL TEMPLATES (replaces broken import) ---
-// FIX #1: Removed import from ../src/utils/AtelierEmails.js
-// That path does not exist in Vercel's serverless bundle.
-// All email helpers are now defined inline below.
-// =========================================================
-
-function getSignupEmail(name: string): string {
-  return `<div style="font-family:sans-serif;padding:32px;background:#0f0f0f;color:#fff">
-    <h1 style="letter-spacing:4px">DENFIT</h1>
-    <p>Welcome, ${name}. You have joined the inner circle.</p>
-    <p style="color:#aaa;font-size:12px">This is an automated message from DENFIT.</p>
-  </div>`;
-}
-
-function getLoginEmail(name: string): string {
-  return `<div style="font-family:sans-serif;padding:32px;background:#0f0f0f;color:#fff">
-    <h1 style="letter-spacing:4px">DENFIT</h1>
-    <p>Sovereign access detected, ${name}. A new session has been initiated.</p>
-    <p style="color:#aaa;font-size:12px">If this was not you, secure your account immediately.</p>
-  </div>`;
-}
-
-function getOrderEmail(name: string, orderId: string, total: string): string {
-  return `<div style="font-family:sans-serif;padding:32px;background:#0f0f0f;color:#fff">
-    <h1 style="letter-spacing:4px">DENFIT</h1>
-    <p>Acquisition secured, ${name}.</p>
-    <p>Order ID: <strong>${orderId}</strong></p>
-    <p>Total: <strong>PKR ${total}</strong></p>
-    <p style="color:#aaa;font-size:12px">You will receive a shipping update soon.</p>
-  </div>`;
-}
-
-function getAbandonedCartEmail(name: string): string {
-  return `<div style="font-family:sans-serif;padding:32px;background:#0f0f0f;color:#fff">
-    <h1 style="letter-spacing:4px">DENFIT</h1>
-    <p>${name}, your selections await. Complete your acquisition before they are claimed.</p>
-  </div>`;
-}
-
-function getOTPEmail(code: string): string {
-  return `<div style="font-family:sans-serif;padding:32px;background:#0f0f0f;color:#fff">
-    <h1 style="letter-spacing:4px">DENFIT</h1>
-    <p>Your Security Access Key: <strong style="font-size:28px;letter-spacing:8px">${code}</strong></p>
-    <p style="color:#aaa;font-size:12px">This code expires in 10 minutes.</p>
-  </div>`;
-}
-
-function getWishlistEmail(name: string): string {
-  return `<div style="font-family:sans-serif;padding:32px;background:#0f0f0f;color:#fff">
-    <h1 style="letter-spacing:4px">DENFIT</h1>
-    <p>${name}, items on your wishlist are moving fast. Secure them now.</p>
-  </div>`;
-}
-
-function getShippedEmail(name: string, orderId: string): string {
-  return `<div style="font-family:sans-serif;padding:32px;background:#0f0f0f;color:#fff">
-    <h1 style="letter-spacing:4px">DENFIT</h1>
-    <p>${name}, your order <strong>${orderId}</strong> has been dispatched.</p>
-    <p style="color:#aaa;font-size:12px">Expect delivery within 3–5 business days.</p>
-  </div>`;
-}
-
-function getDeliveredEmail(name: string, orderId: string): string {
-  return `<div style="font-family:sans-serif;padding:32px;background:#0f0f0f;color:#fff">
-    <h1 style="letter-spacing:4px">DENFIT</h1>
-    <p>${name}, your order <strong>${orderId}</strong> has been delivered. Welcome to the collection.</p>
-  </div>`;
-}
 
 /**
  * MIDDLEWARE CONFIGURATION
@@ -99,16 +41,6 @@ app.use(
 );
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
-
-/**
- * STATIC DIRECTORY CONFIGURATION
- * FIX #2: Use /tmp/uploads — only /tmp is writable on Vercel
- */
-const uploadDir = "/tmp/uploads";
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
-app.use("/uploads", express.static(uploadDir));
 
 // =========================================================
 // --- 1. TYPES & INTERFACES ---
@@ -237,6 +169,35 @@ export interface ISiteConfig extends Document {
   };
 }
 
+export interface IMedia extends Document {
+  filename: string;
+  contentType: string;
+  data: string;
+}
+
+export interface IDiscountCode extends Document {
+  name: string;
+  percent: number;
+  startDate: Date;
+  endDate: Date;
+  minOrderAmount: number;
+  isActive: boolean;
+}
+
+export interface IContactMessage extends Document {
+  fullName: string;
+  email: string;
+  subject: string;
+  message: string;
+  reply?: string;
+  status: 'pending' | 'replied';
+}
+
+export interface INewsletterSubscription extends Document {
+  email: string;
+  subscribedAt: Date;
+}
+
 // =========================================================
 // --- 2. DATABASE MODELS ---
 // =========================================================
@@ -350,127 +311,72 @@ const ProductSchema = new Schema<IProduct>(
     lowStockAlert: { type: Number, default: 5 },
     isNewArrival: { type: Boolean, default: false },
     isFeatured: { type: Boolean, default: false },
-    reviews: [ReviewSchema],
+    reviews: { type: [ReviewSchema], default: () => [] },
   },
   { timestamps: true }
 );
 
-const UserSchema = new Schema<IUser>(
-  {
-    uid: { type: String, required: true, unique: true },
-    email: { type: String, required: true, lowercase: true },
-    displayName: String,
-    role: { type: String, enum: ["user", "admin"], default: "user" },
-    phone: String,
-    photoURL: String,
-    lastLogin: Date,
-    activity: [UserActivitySchema],
-    cart: [CartItemSchema],
-    cartEmailSent: { type: Boolean, default: false },
-  } as any,
-  { timestamps: true }
-);
+const UserSchema = new Schema<IUser>({
+  uid: { type: String, required: true, unique: true },
+  email: { type: String, required: true, lowercase: true },
+  displayName: String,
+  role: { type: String, enum: ["user", "admin"], default: "user" },
+  phone: String,
+  photoURL: String,
+  lastLogin: Date,
+  activity: { type: [UserActivitySchema], default: () => [] },
+  cart: [CartItemSchema],
+  cartEmailSent: { type: Boolean, default: false },
+}, { timestamps: true });
 
-const OrderSchema = new Schema<IOrder>(
-  {
-    userId: { type: String, index: true },
-    items: [OrderItemSchema],
-    totalAmount: { type: Number, required: true, default: 0 },
-    status: {
-      type: String,
-      enum: ["Pending", "Confirmed", "Shipped", "Delivered", "Cancelled"],
-      default: "Pending",
-    },
-    shippingDetails: {
-      firstName: String,
-      lastName: String,
-      email: String,
-      phone: String,
-      address: {
-        line1: String,
-        line2: String,
-        city: String,
-        state: String,
-        postalCode: String,
-        country: String,
-      },
-    },
-  } as any,
-  { timestamps: true }
-);
+const MediaSchema = new Schema<IMedia>({
+  filename: { type: String, required: true },
+  contentType: { type: String, required: true },
+  data: { type: String, required: true }
+}, { timestamps: true });
 
-const User: Model<IUser> =
-  (mongoose.models.User as Model<IUser>) ||
-  mongoose.model<IUser>("User", UserSchema);
+const DiscountCodeSchema = new Schema<IDiscountCode>({
+  name: { type: String, required: true, unique: true, uppercase: true },
+  percent: { type: Number, required: true },
+  startDate: { type: Date, required: true },
+  endDate: { type: Date, required: true },
+  minOrderAmount: { type: Number, default: 0 },
+  isActive: { type: Boolean, default: true }
+}, { timestamps: true });
 
-const Product: Model<IProduct> =
-  (mongoose.models.Product as Model<IProduct>) ||
-  mongoose.model<IProduct>("Product", ProductSchema);
+const ContactMessageSchema = new Schema<IContactMessage>({
+  fullName: { type: String, required: true },
+  email: { type: String, required: true },
+  subject: { type: String, required: true },
+  message: { type: String, required: true },
+  reply: { type: String },
+  status: { type: String, enum: ['pending', 'replied'], default: 'pending' }
+}, { timestamps: true });
 
-const SiteConfig: Model<ISiteConfig> =
-  (mongoose.models.SiteConfig as Model<ISiteConfig>) ||
-  mongoose.model<ISiteConfig>("SiteConfig", SiteConfigSchema);
-
-const Order: Model<IOrder> =
-  (mongoose.models.Order as Model<IOrder>) ||
-  mongoose.model<IOrder>("Order", OrderSchema);
-
-// =========================================================
-// --- 3. DB CONNECTION (CACHED FOR SERVERLESS)
-// FIX #3: Cached connection prevents new connections on every
-// cold start, which caused hangs and timeouts on Vercel.
-// =========================================================
-
-let isConnected = false;
-
-async function connectDB(): Promise<void> {
-  if (isConnected && mongoose.connection.readyState === 1) return;
-  const uri = process.env.MONGODB_URI;
-  if (!uri) {
-    console.error("❌ MONGODB_URI not set");
-    return;
-  }
-  try {
-    await mongoose.connect(uri, {
-      serverSelectionTimeoutMS: 5000,
-      socketTimeoutMS: 10000,
-    });
-    isConnected = true;
-    console.log("✅ DB Connected");
-  } catch (err) {
-    isConnected = false;
-    console.error("❌ DB Failed", err);
-    throw err;
-  }
-}
-
-// DB middleware — runs before every request
-app.use(async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    await connectDB();
-    next();
-  } catch {
-    res.status(503).json({ error: "Database unavailable" });
-  }
+const NewsletterSubscriptionSchema = new Schema<INewsletterSubscription>({
+  email: { type: String, required: true, unique: true, lowercase: true },
+  subscribedAt: { type: Date, default: Date.now }
 });
 
+// ✅ Strongly typed models
+const User: Model<IUser> = (mongoose.models.User as Model<IUser>) || mongoose.model<IUser>("User", UserSchema);
+const Product: Model<IProduct> = (mongoose.models.Product as Model<IProduct>) || mongoose.model<IProduct>("Product", ProductSchema);
+const SiteConfig: Model<ISiteConfig> = (mongoose.models.SiteConfig as Model<ISiteConfig>) || mongoose.model<ISiteConfig>("SiteConfig", SiteConfigSchema);
+const Order: Model<IOrder> = (mongoose.models.Order as Model<IOrder>) || mongoose.model<IOrder>("Order", OrderSchema);
+const Media: Model<IMedia> = (mongoose.models.Media as Model<IMedia>) || mongoose.model<IMedia>("Media", MediaSchema);
+const DiscountCode: Model<IDiscountCode> = (mongoose.models.DiscountCode as Model<IDiscountCode>) || mongoose.model<IDiscountCode>("DiscountCode", DiscountCodeSchema);
+const ContactMessage: Model<IContactMessage> = (mongoose.models.ContactMessage as Model<IContactMessage>) || mongoose.model<IContactMessage>("ContactMessage", ContactMessageSchema);
+const NewsletterSubscription: Model<INewsletterSubscription> = (mongoose.models.NewsletterSubscription as Model<INewsletterSubscription>) || mongoose.model<INewsletterSubscription>("NewsletterSubscription", NewsletterSubscriptionSchema);
+
 // =========================================================
-// --- 4. STORAGE ENGINE ---
-// FIX #4: Destination changed to /tmp/uploads (writable on Vercel)
+// --- 3. MEMORY STORAGE ENGINE FOR VERCEL ---
 // =========================================================
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, "/tmp/uploads");
-  },
-  filename: (req, file, cb) => {
-    cb(null, Date.now() + "-" + file.originalname);
-  },
-});
+const storage = multer.memoryStorage(); // Pure buffer storage to avoid serverless disk crash
 const upload = multer({ storage });
 
 // =========================================================
-// --- 5. AI STYLIST ENGINE ---
+// --- 4. AI STYLIST ENGINE ---
 // =========================================================
 
 app.post("/api/ai/stylist", async (req: Request, res: Response) => {
@@ -480,7 +386,8 @@ app.post("/api/ai/stylist", async (req: Request, res: Response) => {
     if (!apiKey) return res.status(500).json({ error: "AI Key Missing" });
 
     const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
-    const response = await fetch(API_URL, {
+    
+    const response = await globalThis.fetch(API_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -495,18 +402,11 @@ app.post("/api/ai/stylist", async (req: Request, res: Response) => {
           })),
           { role: "user", parts: [{ text: message }] },
         ],
-        generationConfig: {
-          temperature: 0.7,
-          topP: 0.95,
-          topK: 40,
-          maxOutputTokens: 1024,
-        },
+        generationConfig: { temperature: 0.7, topP: 0.95, topK: 40, maxOutputTokens: 1024 }
       }),
     });
     const data: any = await response.json();
-    const text =
-      data?.candidates?.[0]?.content?.parts?.[0]?.text || "Processing...";
-
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "Processing...";
     res.json({ text });
   } catch (error) {
     console.error("/api/ai/stylist error:", error);
@@ -515,7 +415,7 @@ app.post("/api/ai/stylist", async (req: Request, res: Response) => {
 });
 
 // =========================================================
-// --- 6. AUTHENTICATION & IDENTITY ---
+// --- 5. AUTHENTICATION & IDENTITY ---
 // =========================================================
 
 app.post("/api/auth/sync", async (req: Request, res: Response) => {
@@ -524,19 +424,16 @@ app.post("/api/auth/sync", async (req: Request, res: Response) => {
     if (!uid || !email) return res.status(400).json({ success: false });
 
     const role =
-      email === "admin@com" || email === process.env.ADMIN_EMAIL
+      email === "admin@roomy.com" || 
+      email === "admin@rumi.com" || 
+      email === "admin@luxeattire.com" || 
+      email === process.env.ADMIN_EMAIL
         ? "admin"
         : "user";
 
     const user = await User.findOneAndUpdate(
       { uid },
-      {
-        email: email.toLowerCase(),
-        displayName,
-        photoURL,
-        role,
-        lastLogin: new Date(),
-      },
+      { email: email.toLowerCase(), displayName, photoURL, role, lastLogin: new Date() },
       { upsert: true, new: true }
     );
 
@@ -546,18 +443,20 @@ app.post("/api/auth/sync", async (req: Request, res: Response) => {
     });
 
     if (isNewUser) {
+      const emailHtml = getSignupEmail(displayName || "Patron");
       await transporter.sendMail({
         from: `"DENFIT" <${process.env.EMAIL_USER}>`,
         to: email,
         subject: "Welcome to the Inner Circle",
-        html: getSignupEmail(displayName || "Patron"),
+        html: emailHtml,
       });
     } else {
+      const emailHtml = getLoginEmail(displayName || "Patron");
       await transporter.sendMail({
         from: `"DENFIT Security" <${process.env.EMAIL_USER}>`,
         to: email,
         subject: "Sovereign Access Detected",
-        html: getLoginEmail(displayName || "Patron"),
+        html: emailHtml,
       });
     }
 
@@ -569,7 +468,7 @@ app.post("/api/auth/sync", async (req: Request, res: Response) => {
 });
 
 // =========================================================
-// --- 7. PRODUCT MANAGEMENT ---
+// --- 6. PRODUCT MANAGEMENT ---
 // =========================================================
 
 app.get("/api/products", async (req: Request, res: Response) => {
@@ -582,7 +481,7 @@ app.get("/api/products", async (req: Request, res: Response) => {
   }
 });
 
-app.post("/api/products/add", async (req: Request, res: Response) => {
+app.post("/api/admin/products", async (req: Request, res: Response) => {
   try {
     const product = new Product(req.body);
     await product.save();
@@ -593,7 +492,7 @@ app.post("/api/products/add", async (req: Request, res: Response) => {
   }
 });
 
-app.delete("/api/products/:id", async (req: Request, res: Response) => {
+app.delete("/api/admin/products/:id", async (req: Request, res: Response) => {
   try {
     await Product.findByIdAndDelete(req.params.id);
     res.json({ success: true });
@@ -604,7 +503,7 @@ app.delete("/api/products/:id", async (req: Request, res: Response) => {
 });
 
 // =========================================================
-// --- 8. ORDER SYSTEM ---
+// --- 7. ORDER SYSTEM ---
 // =========================================================
 
 app.post("/api/orders/create", async (req: Request, res: Response) => {
@@ -618,6 +517,12 @@ app.post("/api/orders/create", async (req: Request, res: Response) => {
     const order = new Order({ userId, items, totalAmount, shippingDetails });
     await order.save();
 
+    const emailHtml = getOrderEmail(
+      shippingDetails?.firstName || "Patron",
+      order._id.toString(),
+      totalAmount.toString()
+    );
+
     const transporter = nodemailer.createTransport({
       service: "gmail",
       auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
@@ -626,11 +531,7 @@ app.post("/api/orders/create", async (req: Request, res: Response) => {
       from: `"DENFIT" <${process.env.EMAIL_USER}>`,
       to: shippingDetails?.email,
       subject: "Acquisition Secured",
-      html: getOrderEmail(
-        shippingDetails?.firstName || "Patron",
-        order._id.toString(),
-        totalAmount.toString()
-      ),
+      html: emailHtml,
     });
 
     res.json({ success: true, orderId: order._id });
@@ -650,7 +551,7 @@ app.get("/api/admin/orders", async (req: Request, res: Response) => {
   }
 });
 
-app.patch("/api/orders/:id/status", async (req: Request, res: Response) => {
+app.put("/api/admin/orders/:id/status", async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
@@ -671,7 +572,7 @@ app.patch("/api/orders/:id/status", async (req: Request, res: Response) => {
 });
 
 // =========================================================
-// --- 9. ADMIN & LOGS ---
+// --- 8. ADMIN DASHBOARD, STATS & SYSTEM RESET ---
 // =========================================================
 
 app.get("/api/admin/customers", async (req: Request, res: Response) => {
@@ -698,19 +599,85 @@ app.post("/api/admin/customers/log", async (req: Request, res: Response) => {
   }
 });
 
-app.post(
-  "/api/admin/upload",
-  upload.single("file"),
-  (req: Request, res: Response) => {
-    try {
-      if (!req.file) return res.status(400).json({ success: false });
-      res.json({ success: true, url: `/uploads/${req.file.filename}` });
-    } catch (err) {
-      console.error(err);
-      res.status(500).json({ success: false });
+// SYSTEM RESET API
+app.delete("/api/admin/clear/:category", async (req: Request, res: Response) => {
+  try {
+    const { category } = req.params;
+    if (category === 'dashboard' || category === 'stats') {
+      await User.updateMany({}, { $set: { activity: [] } });
+      await Order.deleteMany({});
+    } else if (category === 'orders') {
+      await Order.deleteMany({});
+    } else if (category === 'customers') {
+      await User.deleteMany({ role: { $ne: 'admin' } });
+    } else if (category === 'inquiries') {
+      await ContactMessage.deleteMany({});
     }
+    res.json({ status: "success", message: `${category} cleared.` });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Cleanup failure" });
   }
-);
+});
+
+// REAL-TIME DASHBOARD STATS
+app.get("/api/admin/stats", async (req: Request, res: Response) => {
+  try {
+    const revenueData = await Order.aggregate([{ $group: { _id: null, total: { $sum: "$totalAmount" } } }]);
+    const totalOrders = await Order.countDocuments();
+    const totalProducts = await Product.countDocuments();
+    const activeOrders = await Order.countDocuments({ status: { $nin: ['Delivered', 'Cancelled'] } });
+    const recentOrders = await Order.find().sort({ createdAt: -1 }).limit(10);
+    const lowStock = await Product.find({ stock: { $lte: 10 } }).limit(20);
+
+    res.json({
+      revenue: revenueData[0]?.total || 0,
+      orders: totalOrders,
+      products: totalProducts,
+      activeOrders,
+      recentOrders,
+      lowStock
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Stats failure." });
+  }
+});
+
+// =========================================================
+// --- 9. PERSISTENT UPLOADS & MEDIA ---
+// =========================================================
+
+app.post("/api/admin/upload", upload.single("file"), async (req: Request, res: Response) => {
+  try {
+    if (!req.file) return res.status(400).json({ success: false });
+    
+    const file = req.file;
+    const media = new Media({
+      filename: file.originalname,
+      contentType: file.mimetype,
+      data: file.buffer.toString("base64")
+    });
+    await media.save();
+
+    res.json({ success: true, url: `/api/media/${media._id}` });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false });
+  }
+});
+
+app.get("/api/media/:id", async (req: Request, res: Response) => {
+  try {
+    const media = await Media.findById(req.params.id);
+    if (!media) return res.status(404).send("Not found");
+    
+    const imgBuffer = Buffer.from(media.data, 'base64');
+    res.set('Content-Type', media.contentType);
+    res.send(imgBuffer);
+  } catch (error) {
+    res.status(500).send("Error retrieving media");
+  }
+});
 
 // =========================================================
 // --- 10. SITE CONFIGURATION ---
@@ -730,7 +697,7 @@ app.get("/api/config", async (req: Request, res: Response) => {
   }
 });
 
-app.post("/api/config/update", async (req: Request, res: Response) => {
+app.post("/api/admin/config", async (req: Request, res: Response) => {
   try {
     const config = await SiteConfig.findOneAndUpdate(
       { key: "global" },
@@ -745,7 +712,118 @@ app.post("/api/config/update", async (req: Request, res: Response) => {
 });
 
 // =========================================================
-// --- 11. IDENTITY RECOVERY ---
+// --- 11. INQUIRIES & CONTACTS ---
+// =========================================================
+
+app.get("/api/admin/contacts", async (req: Request, res: Response) => {
+  try {
+    const contacts = await ContactMessage.find().sort({ createdAt: -1 });
+    res.json(contacts);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch contact messages" });
+  }
+});
+
+app.post("/api/admin/contacts/reply", async (req: Request, res: Response) => {
+  try {
+    const { contactId, reply } = req.body;
+    const contact = await ContactMessage.findById(contactId);
+    if (!contact) return res.status(404).json({ error: "Message not found" });
+
+    contact.reply = reply;
+    contact.status = 'replied';
+    await contact.save();
+
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to send reply" });
+  }
+});
+
+// =========================================================
+// --- 12. DISCOUNT MANAGEMENT ---
+// =========================================================
+
+app.get("/api/admin/discounts", async (req: Request, res: Response) => {
+  try {
+    const codes = await DiscountCode.find().sort({ createdAt: -1 });
+    res.json(codes);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch discounts" });
+  }
+});
+
+app.post("/api/admin/discounts", async (req: Request, res: Response) => {
+  try {
+    const { name, percent, discount: discountVal, startDate, endDate, minOrderAmount } = req.body;
+    const finalPercent = percent !== undefined ? percent : discountVal;
+    const codeName = name.trim().toUpperCase();
+
+    const existing = await DiscountCode.findOne({ name: codeName });
+    if (existing) return res.status(400).json({ error: "Code already exists" });
+
+    const discount = new DiscountCode({
+      name: codeName,
+      percent: Number(finalPercent),
+      startDate: new Date(startDate),
+      endDate: new Date(endDate),
+      minOrderAmount: Number(minOrderAmount || 0)
+    });
+    await discount.save();
+    res.json({ success: true, code: discount });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete("/api/admin/discounts/:id", async (req: Request, res: Response) => {
+  try {
+    await DiscountCode.findByIdAndDelete(req.params.id);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to delete" });
+  }
+});
+
+app.get("/api/discounts", async (req: Request, res: Response) => {
+  try {
+    const now = new Date();
+    const codes = await DiscountCode.find({ isActive: true, endDate: { $gte: now } });
+    res.json(codes);
+  } catch (error) {
+    res.status(500).json({ error: "Failed" });
+  }
+});
+
+// =========================================================
+// --- 13. NEWSLETTER ---
+// =========================================================
+
+app.post("/api/newsletter/subscribe", async (req: Request, res: Response) => {
+  try {
+    const { email } = req.body;
+    const existing = await NewsletterSubscription.findOne({ email });
+    if (existing) return res.status(200).json({ success: true });
+
+    const sub = new NewsletterSubscription({ email });
+    await sub.save();
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: "Failed" });
+  }
+});
+
+app.get("/api/admin/newsletter", async (req: Request, res: Response) => {
+  try {
+    const subs = await NewsletterSubscription.find().sort({ subscribedAt: -1 });
+    res.json(subs);
+  } catch (error) {
+    res.status(500).json({ error: "Failed" });
+  }
+});
+
+// =========================================================
+// --- 14. IDENTITY RECOVERY & DISPATCH ---
 // =========================================================
 
 const otpStore = new Map<string, string>();
@@ -756,6 +834,7 @@ app.post("/api/auth/forgot-password", async (req: Request, res: Response) => {
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     otpStore.set(email, code);
 
+    const emailHtml = getOTPEmail(code);
     const transporter = nodemailer.createTransport({
       service: "gmail",
       auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
@@ -764,7 +843,7 @@ app.post("/api/auth/forgot-password", async (req: Request, res: Response) => {
       from: `"DENFIT" <${process.env.EMAIL_USER}>`,
       to: email,
       subject: "Security Access Key",
-      html: getOTPEmail(code),
+      html: emailHtml,
     });
     res.json({ success: true });
   } catch (err) {
@@ -815,8 +894,40 @@ app.post("/api/orchestrate/dispatch-email", async (req: Request, res: Response) 
   }
 });
 
+// --- VERCEL CRON JOBS FOR AUTOMATIC EMAILS ---
+app.get("/api/cron/abandoned-cart", async (req: Request, res: Response) => {
+  try {
+    console.log("🧺 [CRON]: Processing scheduled cart checks...");
+    const abandonedUsers = await User.find({ "cart.0": { $exists: true }, cartEmailSent: false });
+
+    if (abandonedUsers.length > 0) {
+      const transporter = nodemailer.createTransport({
+        service: "gmail",
+        auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
+      });
+
+      for (const user of abandonedUsers) {
+        const html = getAbandonedCartEmail(user.displayName || "Patron");
+        await transporter.sendMail({
+          from: `"DENFIT" <${process.env.EMAIL_USER}>`,
+          to: user.email,
+          subject: "You Left Something Behind",
+          html,
+        });
+
+        user.cartEmailSent = true;
+        await user.save();
+      }
+    }
+    res.json({ success: true, processed: abandonedUsers.length });
+  } catch (error: any) {
+    console.error("Cron Error:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // =========================================================
-// --- 12. GLOBAL HANDLERS ---
+// --- 15. GLOBAL HANDLERS ---
 // =========================================================
 
 app.get("/", (req: Request, res: Response) => {
@@ -832,19 +943,14 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
   res.status(500).json({ error: "Internal Server Error" });
 });
 
-// =========================================================
-// --- 13. SERVER START
-// FIX #5: process.env.VERCEL is the correct Vercel flag.
-// The old guard (VERCEL_ENV !== "production") still ran
-// app.listen() on preview deployments, crashing them.
-// =========================================================
-
-if (!process.env.VERCEL) {
-  const PORT = process.env.PORT || 3000;
-  app.listen(PORT, () => {
-    console.log(`🚀 Server running on http://localhost:${PORT}`);
-  });
+// --- DB CONNECTION ---
+const MONGODB_URI = process.env.MONGODB_URI;
+if (MONGODB_URI) {
+  mongoose
+    .connect(MONGODB_URI)
+    .then(() => console.log("✅ DB Connected"))
+    .catch((err) => console.error("❌ DB Failed", err));
 }
 
-// ✅ Default export for Vercel serverless
+// VERCEL EXPORT
 export default app;
