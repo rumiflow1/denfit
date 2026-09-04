@@ -372,7 +372,7 @@ const NewsletterSubscription: Model<INewsletterSubscription> = (mongoose.models.
 // --- 3. MEMORY STORAGE ENGINE FOR VERCEL ---
 // =========================================================
 
-const storage = multer.memoryStorage(); // Pure buffer storage to avoid serverless disk crash
+const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
 // =========================================================
@@ -503,7 +503,7 @@ app.delete("/api/admin/products/:id", async (req: Request, res: Response) => {
 });
 
 // =========================================================
-// --- 7. ORDER SYSTEM ---
+// --- 7. ORDER SYSTEM (WITH RESILIENT EMAIL BLOCKS) ---
 // =========================================================
 
 app.post("/api/orders/create", async (req: Request, res: Response) => {
@@ -514,29 +514,35 @@ app.post("/api/orders/create", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "Missing or invalid items" });
     }
 
+    // Secure the order in the database first
     const order = new Order({ userId, items, totalAmount, shippingDetails });
     await order.save();
 
-    const emailHtml = getOrderEmail(
-      shippingDetails?.firstName || "Patron",
-      order._id.toString(),
-      totalAmount.toString()
-    );
+    // Resilient Email execution: If Gmail SMTP fails, the order placement STILL succeeds!
+    try {
+      const emailHtml = getOrderEmail(
+        shippingDetails?.firstName || "Patron",
+        order._id.toString(),
+        totalAmount.toString()
+      );
 
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
-    });
-    await transporter.sendMail({
-      from: `"DENFIT" <${process.env.EMAIL_USER}>`,
-      to: shippingDetails?.email,
-      subject: "Acquisition Secured",
-      html: emailHtml,
-    });
+      const transporter = nodemailer.createTransport({
+        service: "gmail",
+        auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
+      });
+      await transporter.sendMail({
+        from: `"DENFIT" <${process.env.EMAIL_USER}>`,
+        to: shippingDetails?.email,
+        subject: "Acquisition Secured",
+        html: emailHtml,
+      });
+    } catch (emailErr) {
+      console.warn("⚠️ SMTP Relay Alert: Confirmation email failed to send, but order was secured safely in database.", emailErr);
+    }
 
     res.json({ success: true, orderId: order._id });
   } catch (err) {
-    console.error(err);
+    console.error("Order creation fatal database failure:", err);
     res.status(500).json({ success: false });
   }
 });
@@ -572,7 +578,31 @@ app.put("/api/admin/orders/:id/status", async (req: Request, res: Response) => {
 });
 
 // =========================================================
-// --- 8. ADMIN DASHBOARD, STATS & SYSTEM RESET ---
+// --- 8. ADMIN USER PROFILE ---
+// =========================================================
+
+app.get("/api/user/profile/:uid", async (req: Request, res: Response) => {
+  try {
+    const user = await User.findOne({ uid: req.params.uid });
+    if (!user) return res.status(404).json({ error: "User profile not found." });
+    res.json(user);
+  } catch (error) {
+    res.status(500).json({ error: "Profile retrieval failure." });
+  }
+});
+
+app.post("/api/user/update-profile", async (req: Request, res: Response) => {
+  try {
+    const { uid, displayName, phone, photoURL } = req.body;
+    const user = await User.findOneAndUpdate({ uid }, { displayName, phone, photoURL }, { new: true });
+    res.json({ success: true, user });
+  } catch (error) {
+    res.status(500).json({ error: "Profile update failure." });
+  }
+});
+
+// =========================================================
+// --- 9. ADMIN DASHBOARD, STATS & SYSTEM RESET ---
 // =========================================================
 
 app.get("/api/admin/customers", async (req: Request, res: Response) => {
@@ -644,7 +674,7 @@ app.get("/api/admin/stats", async (req: Request, res: Response) => {
 });
 
 // =========================================================
-// --- 9. PERSISTENT UPLOADS & MEDIA ---
+// --- 10. PERSISTENT UPLOADS & MEDIA ---
 // =========================================================
 
 app.post("/api/admin/upload", upload.single("file"), async (req: Request, res: Response) => {
@@ -680,7 +710,7 @@ app.get("/api/media/:id", async (req: Request, res: Response) => {
 });
 
 // =========================================================
-// --- 10. SITE CONFIGURATION ---
+// --- 11. SITE CONFIGURATION ---
 // =========================================================
 
 app.get("/api/health", (req: Request, res: Response) => {
@@ -712,7 +742,7 @@ app.post("/api/admin/config", async (req: Request, res: Response) => {
 });
 
 // =========================================================
-// --- 11. INQUIRIES & CONTACTS ---
+// --- 12. INQUIRIES & CONTACTS ---
 // =========================================================
 
 app.get("/api/admin/contacts", async (req: Request, res: Response) => {
@@ -741,7 +771,7 @@ app.post("/api/admin/contacts/reply", async (req: Request, res: Response) => {
 });
 
 // =========================================================
-// --- 12. DISCOUNT MANAGEMENT ---
+// --- 13. DISCOUNT MANAGEMENT ---
 // =========================================================
 
 app.get("/api/admin/discounts", async (req: Request, res: Response) => {
@@ -796,7 +826,7 @@ app.get("/api/discounts", async (req: Request, res: Response) => {
 });
 
 // =========================================================
-// --- 13. NEWSLETTER ---
+// --- 14. NEWSLETTER ---
 // =========================================================
 
 app.post("/api/newsletter/subscribe", async (req: Request, res: Response) => {
@@ -823,7 +853,7 @@ app.get("/api/admin/newsletter", async (req: Request, res: Response) => {
 });
 
 // =========================================================
-// --- 14. IDENTITY RECOVERY & DISPATCH ---
+// --- 15. IDENTITY RECOVERY & DISPATCH ---
 // =========================================================
 
 const otpStore = new Map<string, string>();
@@ -927,7 +957,7 @@ app.get("/api/cron/abandoned-cart", async (req: Request, res: Response) => {
 });
 
 // =========================================================
-// --- 15. GLOBAL HANDLERS ---
+// --- 16. GLOBAL HANDLERS ---
 // =========================================================
 
 app.get("/", (req: Request, res: Response) => {
