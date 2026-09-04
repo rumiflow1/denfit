@@ -1,8 +1,8 @@
 import mongoose from "mongoose";
 
-// Keep one connection promise per warm Vercel instance. Model imports happen before
-// Express starts handling requests, so the API can await a real DB connection
-// instead of relying on Mongoose's command buffering.
+// Vercel/Node loads this module before Express begins serving requests. Establish
+// one shared connection and wait for it so database-backed routes do not race the
+// initial connection or rely on Mongoose command buffering.
 const MONGODB_URI = process.env.MONGODB_URI;
 const globalForDb = globalThis as typeof globalThis & { __denfitMongo?: Promise<typeof mongoose> | null };
 
@@ -14,6 +14,7 @@ if (MONGODB_URI && !globalForDb.__denfitMongo) {
 }
 
 export const dbReady = globalForDb.__denfitMongo || Promise.resolve(mongoose);
+if (MONGODB_URI) await dbReady;
 
 export const ProductSchema = new mongoose.Schema({
   name: { type: String, required: true }, price: { type: Number, required: true }, originalPrice: Number, discount: Number,
