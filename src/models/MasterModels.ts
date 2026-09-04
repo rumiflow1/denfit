@@ -1,3 +1,4 @@
+import "dotenv/config";
 import mongoose from "mongoose";
 
 // Vercel/Node loads this module before Express begins serving requests. Establish
