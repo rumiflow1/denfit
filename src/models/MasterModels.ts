@@ -1,5 +1,20 @@
 import mongoose from "mongoose";
 
+// Keep one connection promise per warm Vercel instance. Model imports happen before
+// Express starts handling requests, so the API can await a real DB connection
+// instead of relying on Mongoose's command buffering.
+const MONGODB_URI = process.env.MONGODB_URI;
+const globalForDb = globalThis as typeof globalThis & { __denfitMongo?: Promise<typeof mongoose> | null };
+
+if (MONGODB_URI && !globalForDb.__denfitMongo) {
+  globalForDb.__denfitMongo = mongoose.connect(MONGODB_URI, {
+    serverSelectionTimeoutMS: 10000,
+    maxPoolSize: 10,
+  });
+}
+
+export const dbReady = globalForDb.__denfitMongo || Promise.resolve(mongoose);
+
 export const ProductSchema = new mongoose.Schema({
   name: { type: String, required: true }, price: { type: Number, required: true }, originalPrice: Number, discount: Number,
   image: { type: String, required: true }, images: [String], category: { type: String, required: true }, collectionName: String,
@@ -17,7 +32,6 @@ export const UserSchema = new mongoose.Schema({
 export const CustomerLogSchema = new mongoose.Schema({ userId: String, email: String, action: { type: String, required: true }, details: Object, timestamp: { type: Date, default: Date.now } });
 
 export const OrderSchema = new mongoose.Schema({
-  // Guest checkout is supported, so userId must not block an otherwise valid order.
   userId: { type: String, required: false }, email: { type: String, required: true }, fullName: { type: String, required: true }, phone: String,
   items: Array, totalAmount: Number, status: { type: String, default: "Pending" }, shippingAddress: Object, shippingDetails: Object, paymentMethod: String,
   createdAt: { type: Date, default: Date.now },
