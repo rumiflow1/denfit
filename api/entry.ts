@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import app from "./index.js";
 import { connectDB } from "./_shared.js";
 import { handleFixRoute } from "./fixes.js";
+import { logAuthActivity } from "./activity.js";
 
 export default async function handler(req: Request, res: Response) {
   if (req.url === "/api/health" || req.url === "/health") {
@@ -22,6 +23,7 @@ export default async function handler(req: Request, res: Response) {
     return res.status(503).json({ success: false, error: "Database unavailable" });
   }
 
+  await logAuthActivity(req, res);
   if (await handleFixRoute(req, res)) return;
   return app(req, res);
 }
