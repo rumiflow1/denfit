@@ -202,6 +202,70 @@ export const DEFAULT_SITE_CONFIG = {
     isVisible: true,
     title: "COLLECTIONS",
     tagline: "Explore Our Finest Selection",
-    items: []
-  }
+    items: [
+      { id: 'men', name: "Men's Atelier", image: "https://images.unsplash.com/photo-1488161628813-04466f872be2", link: "/products?category=men" },
+      { id: 'women', name: "Women's Couture", image: "https://images.unsplash.com/photo-1483985988355-763728e1935b", link: "/products?category=women" },
+      { id: 'children', name: "Children's Elite", image: "https://images.unsplash.com/photo-1519702281827-04664539860b?q=80&w=2070", link: "/products?category=children" },
+      { id: 'accessories', name: "Luxury Accessories", image: "https://images.unsplash.com/photo-1523275335684-37898b6baf30?q=80&w=2099", link: "/products?category=accessories" }
+    ]
+  },
+  auth: {
+    leftImage: 'https://images.unsplash.com/photo-1490481651871-ab68de25d43d?auto=format&fit=crop&q=80&w=2070',
+    loginTitle: 'Sovereign Access',
+    loginSubtitle: 'Welcome to the Ethereal Atelier Vault.',
+    signupTitle: 'Establish Patronage',
+    signupSubtitle: 'Orchestrate Your Style Identity',
+    recoveryTitle: 'Identity Recovery',
+    recoverySubtitleEmail: 'Enter email for reset code',
+    recoverySubtitleCode: 'A private key was dispatched.',
+    recoverySubtitleReset: 'Establish new luxury credentials'
+  },
+  account: {
+    profileTitle: 'Personal Information',
+    wishlistTitle: 'My Wishlist',
+    ordersTitle: 'Order History',
+    paymentsTitle: 'Payment Methods',
+    addressesTitle: 'Shipping Addresses',
+    discountsTitle: 'My Discounts',
+    securityTitle: 'Security Settings',
+    welcomeMessage: 'Welcome back to your sanctuary.'
+  },
+  customerReviews: {
+    isVisible: true,
+    title: { content: "PATRON VOICES" },
+    tagline: { content: "True Luxury Experience" },
+    items: [
+      { id: '1', name: "Ayan Khan", role: "Elite Member", rating: 5, content: "The craftsmanship is unparalleled. Truly a luxury experience.", date: "2026-04-01" },
+      { id: '2', name: "Sarah Malik", role: "Verified Buyer", rating: 5, content: "Best couture pieces I've ever owned. Worth every cent.", date: "2026-04-10" }
+    ]
+  },
+  trustBadges: { isVisible: true, items: [] },
+  purchaseNotifications: { isVisible: true, items: [] },
+  footer: {
+    isVisible: true,
+    brandName: "RUMY",
+    description: { content: "The definitive destination for luxury attire." },
+    copyright: { content: "© 2026 RUMY. ALL RIGHTS RESERVED." },
+    newsletterTitle: "Newsletter",
+    newsletterDesc: "Subscribe to receive updates, access to exclusive deals, and more.",
+    privacyLabel: "Privacy Policy",
+    termsLabel: "Terms of Service",
+    shopLinks: [],
+    supportLinks: [],
+    socials: []
+  },
+  aiConcierge: {
+    isEnabled: true,
+    brandVoice: "Sophisticated, confident, and professional",
+    systemInstruction: "You are the Elite AI Stylist. You are sophisticated, confident, and professional. Identify yourself as a human luxury ambassador, not an AI. NEVER say 'I apologize', 'I am at your service', or 'I am an AI'. Focus on helping users find the perfect luxury attire from our available collection.",
+    model: "gemini-1.5-flash",
+    welcomeMessage: "Greetings. I am your personal stylist. How may I assist your style journey today?"
+  },
+  pages: {
+    shippingPolicy: "Our luxury items are handled with extreme care.",
+    returnPolicy: "Complimentary 30-day returns.",
+    faq: "# FAQs\nEverything you need to know.",
+    privacyPolicy: "Your privacy is our priority."
+  },
+  elements: {}
 };
