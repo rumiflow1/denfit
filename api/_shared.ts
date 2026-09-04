@@ -4,13 +4,28 @@ let cached: Promise<typeof mongoose> | null = null;
 
 export async function connectDB() {
   if (mongoose.connection.readyState === 1) return mongoose;
-  if (!process.env.MONGODB_URI) throw new Error("MONGODB_URI is not configured");
+
+  if (!process.env.MONGODB_URI) {
+    throw new Error("MONGODB_URI is not configured");
+  }
+
+  // Reuse an already-started connection instead of opening a second pool.
+  if (mongoose.connection.readyState === 2) {
+    await mongoose.connection.asPromise();
+    return mongoose;
+  }
+
   if (!cached) {
-    cached = mongoose.connect(process.env.MONGODB_URI).catch((error) => {
+    cached = mongoose.connect(process.env.MONGODB_URI, {
+      serverSelectionTimeoutMS: 10000,
+      maxPoolSize: 10,
+      minPoolSize: 0,
+    }).catch((error) => {
       cached = null;
       throw error;
     });
   }
+
   await cached;
   return mongoose;
 }
