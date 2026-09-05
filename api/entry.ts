@@ -2,7 +2,7 @@ import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import app from "./index.js";
 import { connectDB } from "./_shared.js";
-import { handleFixRoute } from "./fixes.js";
+import { handleRepair } from "./repair.js";
 import { logAuthActivity } from "./activity.js";
 
 export default async function handler(req: Request, res: Response) {
@@ -16,6 +16,9 @@ export default async function handler(req: Request, res: Response) {
     }
   }
 
+  // Routes that do not require MongoDB must remain available during a transient DB outage.
+  if (await handleRepair(req, res)) return;
+
   try {
     await connectDB();
   } catch (error: any) {
@@ -24,6 +27,5 @@ export default async function handler(req: Request, res: Response) {
   }
 
   await logAuthActivity(req, res);
-  if (await handleFixRoute(req, res)) return;
   return app(req, res);
 }
