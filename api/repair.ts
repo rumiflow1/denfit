@@ -3,14 +3,13 @@ import { BRAND } from "../src/config/brand.js";
 
 const Activity = (mongoose.models.Activity as Model<any>) || mongoose.model("Activity", new Schema({ email: String, action: String, details: Schema.Types.Mixed, timestamp: { type: Date, default: Date.now } }, { timestamps: true }));
 const PasswordReset = (mongoose.models.PasswordReset as Model<any>) || mongoose.model("PasswordReset", new Schema({ email: { type: String, required: true, lowercase: true, index: true }, codeHash: { type: String, required: true }, verified: { type: Boolean, default: false }, expiresAt: { type: Date, required: true, index: true } }, { timestamps: true }));
-const Product = mongoose.models.Product as Model<any>;
-const DiscountCode = mongoose.models.DiscountCode as Model<any>;
-const User = mongoose.models.User as Model<any>;
 
+const getModel = <T = any>(name: string) => mongoose.models[name] as Model<T> | undefined;
 const reply = (res: any, status: number, body: any) => { res.status(status).json(body); return true; };
 const hash = async (value: string) => Buffer.from(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))).toString("hex");
 
 async function sendMail(to: string, subject: string, html: string) {
+  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) throw new Error("Email service is not configured");
   const nodemailer = await import("nodemailer");
   const transporter = nodemailer.default.createTransport({ service: "gmail", auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS } });
   await transporter.sendMail({ from: `"${BRAND.name}" <${process.env.EMAIL_USER}>`, to, subject, html });
@@ -27,10 +26,27 @@ async function generateAI(apiKey: string, model: string, body: any) {
   } finally { clearTimeout(timer); }
 }
 
+async function getFirebaseAdmin() {
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  if (raw) {
+    const admin = await import("firebase-admin");
+    if (!admin.apps.length) admin.initializeApp({ credential: admin.credential.cert(JSON.parse(raw)) });
+    return admin;
+  }
+  const projectId = process.env.FIREBASE_PROJECT_ID;
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+  const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n");
+  if (projectId && clientEmail && privateKey) {
+    const admin = await import("firebase-admin");
+    if (!admin.apps.length) admin.initializeApp({ credential: admin.credential.cert({ projectId, clientEmail, privateKey }) });
+    return admin;
+  }
+  throw new Error("Password recovery service is not configured");
+}
+
 export async function handleRepair(req: any, res: any): Promise<boolean> {
   const url = (req.url || "").split("?")[0];
 
-  // AI intentionally runs before DB initialization: a database outage must never make the AI hang/fail.
   if (req.method === "POST" && url === "/api/ai/stylist") {
     const apiKey = process.env.GEMINI_API_KEY;
     const message = String(req.body?.message || "").trim();
@@ -52,7 +68,9 @@ export async function handleRepair(req: any, res: any): Promise<boolean> {
     try {
       const id = url.split("/").pop() || "";
       if (!mongoose.isValidObjectId(id)) return reply(res, 400, { success: false, error: "Invalid product id" });
-      const product = Product ? await Product.findById(id).lean() : null;
+      const Product = getModel("Product");
+      if (!Product) return reply(res, 503, { success: false, error: "Product service unavailable" });
+      const product = await Product.findById(id).lean();
       return product ? reply(res, 200, product) : reply(res, 404, { success: false, error: "Product not found" });
     } catch (error) { console.error("[product-detail]", error); return reply(res, 500, { success: false, error: "Unable to load product" }); }
   }
@@ -62,6 +80,7 @@ export async function handleRepair(req: any, res: any): Promise<boolean> {
       const codeValue = String(req.body?.code || req.body?.name || req.query?.code || "").trim().toUpperCase();
       const orderAmount = Number(req.body?.orderAmount ?? req.body?.subtotal ?? req.body?.total ?? 0);
       if (!codeValue) return reply(res, 400, { success: false, valid: false, error: "Discount code is required" });
+      const DiscountCode = getModel("DiscountCode");
       if (!DiscountCode) return reply(res, 503, { success: false, valid: false, error: "Discount service unavailable" });
       const code = await DiscountCode.findOne({ name: codeValue }).lean();
       if (!code) return reply(res, 200, { success: false, valid: false, error: "Invalid discount code" });
@@ -71,7 +90,8 @@ export async function handleRepair(req: any, res: any): Promise<boolean> {
       if (code.isActive === false || !Number.isFinite(start) || !Number.isFinite(end) || now < start || now > end) return reply(res, 200, { success: false, valid: false, error: "This discount is not currently active" });
       const minimum = Number(code.minOrderAmount || 0);
       if (minimum > 0 && orderAmount < minimum) return reply(res, 200, { success: false, valid: false, error: `Minimum order amount is ${minimum}` });
-      const percent = Number(code.percent || 0);
+      const percent = Math.max(0, Math.min(100, Number(code.percent || 0)));
+      if (!percent) return reply(res, 200, { success: false, valid: false, error: "This discount has no valid percentage" });
       return reply(res, 200, { success: true, valid: true, code: code.name, percent, discount: percent, minOrderAmount: minimum, startDate: code.startDate, endDate: code.endDate });
     } catch (error) { console.error("[discount-verify]", error); return reply(res, 500, { success: false, valid: false, error: "Unable to verify discount" }); }
   }
@@ -82,6 +102,7 @@ export async function handleRepair(req: any, res: any): Promise<boolean> {
       const normalizedEmail = String(email || "").trim().toLowerCase();
       if (!normalizedEmail && !userId) return reply(res, 400, { success: false, error: "User identity required" });
       const entry = { action: String(action || "activity"), details: typeof details === "string" ? details : JSON.stringify(details ?? {}), timestamp: timestamp ? new Date(timestamp) : new Date() };
+      const User = getModel("User");
       if (User) await User.findOneAndUpdate(userId ? { uid: userId } : { email: normalizedEmail }, { $push: { activity: entry } });
       await Activity.create({ email: normalizedEmail, ...entry });
       return reply(res, 200, { success: true });
@@ -90,6 +111,7 @@ export async function handleRepair(req: any, res: any): Promise<boolean> {
 
   if (req.method === "GET" && url === "/api/admin/customers") {
     try {
+      const User = getModel("User");
       const users = User ? await User.find({ role: "user" }).sort({ createdAt: -1 }).lean() : [];
       const logs = await Activity.find().sort({ timestamp: -1 }).limit(250).lean();
       return reply(res, 200, { users, logs });
@@ -122,23 +144,26 @@ export async function handleRepair(req: any, res: any): Promise<boolean> {
   }
 
   if (req.method === "POST" && url === "/api/auth/reset-password") {
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    const code = String(req.body?.code || "").trim();
+    const newPassword = String(req.body?.newPassword || "");
     try {
-      const email = String(req.body?.email || "").trim().toLowerCase();
-      const code = String(req.body?.code || "").trim();
-      const newPassword = String(req.body?.newPassword || "");
       if (newPassword.length < 6) return reply(res, 400, { success: false, error: "Password must contain at least 6 characters" });
       const record = await PasswordReset.findOne({ email, verified: true }).sort({ createdAt: -1 });
       if (!record || record.expiresAt.getTime() < Date.now() || await hash(code) !== record.codeHash) return reply(res, 400, { success: false, error: "Recovery session expired. Request a new code." });
-      const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
-      if (!raw) return reply(res, 503, { success: false, error: "Password recovery service is not configured" });
-      const admin = await import("firebase-admin");
-      if (!admin.apps.length) admin.initializeApp({ credential: admin.credential.cert(JSON.parse(raw)) });
+      const admin = await getFirebaseAdmin();
       const account = await admin.auth().getUserByEmail(email);
       await admin.auth().updateUser(account.uid, { password: newPassword });
       await PasswordReset.deleteMany({ email });
       await Activity.create({ email, action: "password_reset", details: "Password updated" });
       return reply(res, 200, { success: true });
-    } catch (error) { console.error("[reset-password]", error); return reply(res, 400, { success: false, error: "Password could not be updated. Please request a new code." }); }
+    } catch (error: any) {
+      console.error("[reset-password]", error);
+      const message = String(error?.message || "");
+      if (message.includes("Password recovery service is not configured")) return reply(res, 503, { success: false, error: "Password recovery service is not configured" });
+      if (message.includes("auth/user-not-found")) return reply(res, 404, { success: false, error: "No account exists for this email." });
+      return reply(res, 500, { success: false, error: "Password could not be updated. Please try again." });
+    }
   }
 
   if (req.method === "POST" && url === "/api/cart/abandoned") {
