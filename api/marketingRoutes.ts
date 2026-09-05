@@ -2,8 +2,6 @@ import { connectDB } from "./_shared.js";
 import { BRAND } from "../src/config/brand.js";
 import { sendTransactionalMail } from "../src/utils/mail.js";
 
-const getModel = (name: string) => (requireModel(name));
-const requireModel = (name: string) => (globalThis as any).__denfitModels?.[name];
 const sendMail = async (to:string,subject:string,html:string,dedupeKey="") => sendTransactionalMail(to,subject,html,dedupeKey);
 const getLiveProducts = async () => {
   const mongoose = await import("mongoose");
