@@ -18,15 +18,15 @@ export async function handleAuthSync(req: any, res: any): Promise<boolean> {
   if (req.method !== "POST" || url !== "/api/auth/sync") return false;
   try {
     await connectDB();
-    const { uid, email, displayName, photoURL, isNewUser, authMethod, eventId, currency } = req.body || {};
+    const { uid, email, displayName, photoURL, isNewUser, authMethod, currency } = req.body || {};
     if (!uid || !email) return res.status(400).json({ success: false, error: "User identity required" });
     const normalizedEmail = String(email).trim().toLowerCase();
     const User = getModel("User");
     if (!User) return res.status(503).json({ success: false, error: "User service unavailable" });
     const role = normalizedEmail === "admin@rumi.com" || normalizedEmail === String(process.env.ADMIN_EMAIL || "").trim().toLowerCase() ? "admin" : "user";
     const user = await User.findOneAndUpdate({ uid }, { $set: { email: normalizedEmail, displayName, photoURL, role, lastLogin: new Date() } }, { upsert: true, new: true, setDefaultsOnInsert: true });
-    const safeEvent = String(eventId || `${uid}:${isNewUser ? "signup" : "login"}:${new Date().toISOString().slice(0,16)}`).replace(/[^a-zA-Z0-9:_-]/g, "").slice(0,180);
-    const mailKey = `auth:${safeEvent}`;
+    const bucket = Math.floor(Date.now() / 300000);
+    const mailKey = `auth:${uid}:${isNewUser ? "signup" : "login"}:${bucket}`;
     try {
       const live = await getLiveProducts();
       const { getSignupEmail, getLoginEmail } = await import("../src/utils/AtelierEmails.js");
