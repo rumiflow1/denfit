@@ -1,0 +1,85 @@
+import mongoose from "mongoose";
+import { connectDB } from "./_shared.js";
+import { BRAND, formatCurrency } from "../src/config/brand.js";
+
+const getModel = (name: string) => mongoose.models[name] as any;
+const sendMail = async (to: string, subject: string, html: string) => {
+  if (!to || !process.env.EMAIL_USER || !process.env.EMAIL_PASS) throw new Error("Email service is not configured");
+  const nodemailer = await import("nodemailer");
+  const transporter = nodemailer.default.createTransport({ service: "gmail", auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS } });
+  await transporter.sendMail({ from: `"${BRAND.name}" <${process.env.EMAIL_USER}>`, to, subject, html });
+};
+
+const getLiveProducts = async () => {
+  const Product = getModel("Product");
+  if (!Product) return [];
+  const rows = await Product.find({}).sort({ isFeatured: -1, isNewArrival: -1, createdAt: -1 }).limit(8).lean();
+  return rows.map((p: any) => ({ ...p, id: String(p.id || p._id), name: p.name || p.title, image: p.image || p.images?.[0] || "", images: p.images || [], price: Number(p.price || 0), currency: p.currency || "USD" }));
+};
+
+const customerName = (order: any) => order.fullName || order.shippingDetails?.firstName || "Customer";
+const orderCurrency = (order: any) => String(order.currency || "USD").toUpperCase();
+
+export async function handleOrderRoutes(req: any, res: any): Promise<boolean> {
+  const url = String(req.url || "").split("?")[0];
+  if (!((req.method === "GET" && url === "/api/admin/orders") || (req.method === "POST" && url === "/api/orders/create") || (req.method === "PUT" && /^\/api\/admin\/orders\/[^/]+\/status$/.test(url)))) return false;
+  try { await connectDB(); } catch (error) { console.error("[orders] database unavailable", error); return res.status(503).json({ success: false, error: "Database unavailable" }); }
+  const Order = getModel("Order");
+  if (!Order) return res.status(503).json({ success: false, error: "Order service unavailable" });
+
+  if (req.method === "GET") {
+    const userId = String(req.query?.userId || "").trim();
+    const email = String(req.query?.email || "").trim().toLowerCase();
+    const filter: any = {};
+    if (userId) filter.userId = userId;
+    else if (email) filter.email = email;
+    const orders = await Order.find(filter).sort({ createdAt: -1 }).lean();
+    return res.status(200).json(orders);
+  }
+
+  if (req.method === "POST") {
+    const body = req.body || {};
+    const items = Array.isArray(body.items) ? body.items : [];
+    const shippingDetails = body.shippingDetails || {
+      firstName: body.fullName || "", lastName: "", email: body.email || "", phone: body.phone || "",
+      address: { line1: body.shippingAddress?.street || "", city: body.shippingAddress?.city || "", state: body.shippingAddress?.state || "", postalCode: body.shippingAddress?.zip || "", country: body.shippingAddress?.country || "" }
+    };
+    if (!items.length || !shippingDetails.email || !body.fullName) return res.status(400).json({ success: false, error: "Missing order details" });
+    const currency = String(body.currency || "USD").toUpperCase();
+    const order = await Order.create({
+      userId: body.userId || "GUEST", email: String(shippingDetails.email).trim().toLowerCase(), fullName: body.fullName,
+      phone: body.phone || shippingDetails.phone || "", items, subtotal: Number(body.subtotal ?? body.totalAmount ?? 0),
+      discountAmount: Number(body.discountAmount || 0), discountCode: body.discountCode || "", shippingCost: Number(body.shippingCost || 0),
+      totalAmount: Number(body.totalAmount || 0), currency, paymentMethod: body.paymentMethod || "cod", status: "Pending",
+      shippingAddress: body.shippingAddress || shippingDetails.address, shippingDetails, tracking: {}
+    });
+    try {
+      const products = await getLiveProducts();
+      const { getOrderEmail } = await import("../src/utils/AtelierEmails.js");
+      await sendMail(order.email, `${BRAND.name} | Order Confirmed`, getOrderEmail(customerName(order), order._id.toString(), String(order.totalAmount), products, order));
+    } catch (emailError) { console.warn("[orders] confirmation email failed after order save", emailError); }
+    return res.status(200).json({ success: true, orderId: order._id, order });
+  }
+
+  const id = url.split("/")[4];
+  if (!mongoose.isValidObjectId(id)) return res.status(400).json({ success: false, error: "Invalid order id" });
+  const status = String(req.body?.status || "Pending").trim();
+  const validStatuses = ["Pending", "Confirmed", "Packed", "On the way", "Shipped", "Delivered", "Cancelled"];
+  if (!validStatuses.includes(status)) return res.status(400).json({ success: false, error: "Invalid status" });
+  const now = new Date();
+  const update: any = { status };
+  if (status === "Packed") update["tracking.packed"] = now;
+  if (status === "Shipped" || status === "On the way") update["tracking.shipped"] = now;
+  if (status === "Delivered") { update["tracking.delivered"] = now; if (!req.body?.preserveShipped) update["tracking.shipped"] = now; }
+  const order: any = await Order.findByIdAndUpdate(id, { $set: update }, { new: true }).lean();
+  if (!order) return res.status(404).json({ success: false, error: "Order not found" });
+  try {
+    const products = await getLiveProducts(); const { getPackedEmail, getShippedEmail, getDeliveredEmail } = await import("../src/utils/AtelierEmails.js");
+    const currency = orderCurrency(order); let html = ""; let subject = "";
+    if (status === "Packed") { html = getPackedEmail(customerName(order), order._id.toString(), products, currency); subject = `${BRAND.name} | Order Packed`; }
+    else if (status === "Shipped" || status === "On the way") { html = getShippedEmail(customerName(order), order._id.toString(), products, currency); subject = `${BRAND.name} | Order Shipped`; }
+    else if (status === "Delivered") { html = getDeliveredEmail(customerName(order), order._id.toString(), products, currency); subject = `${BRAND.name} | Order Delivered`; }
+    if (html && order.email) await sendMail(order.email, subject, html);
+  } catch (emailError) { console.warn("[orders] status email failed after status update", emailError); }
+  return res.status(200).json({ success: true, order });
+}
