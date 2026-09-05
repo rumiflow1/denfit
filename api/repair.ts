@@ -17,7 +17,7 @@ async function sendMail(to: string, subject: string, html: string) {
 
 async function generateAI(apiKey: string, model: string, body: any) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 18000);
+  const timer = setTimeout(() => controller.abort(), 9000);
   try {
     const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`, { method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal, body: JSON.stringify(body) });
     const data: any = await r.json().catch(() => ({}));
@@ -52,12 +52,35 @@ export async function handleRepair(req: any, res: any): Promise<boolean> {
     const message = String(req.body?.message || "").trim();
     if (!apiKey) return reply(res, 503, { success: false, error: "AI service is not configured" });
     if (!message) return reply(res, 400, { success: false, error: "Message is required" });
-    const history = Array.isArray(req.body?.history) ? req.body.history.slice(-8) : [];
+
+    // The browser sends the current live catalog/config snapshot. This keeps the assistant
+    // synchronized with admin product/config changes without retraining or hardcoded catalog data.
+    const rawProducts = Array.isArray(req.body?.products) ? req.body.products : [];
+    const products = rawProducts.slice(0, 80).map((p: any) => ({
+      id: String(p?.id || p?._id || ""),
+      name: String(p?.name || p?.title || ""),
+      price: Number(p?.price || 0),
+      image: String(p?.image || p?.images?.[0] || ""),
+      category: String(p?.category || ""),
+      collectionName: String(p?.collectionName || ""),
+      description: String(p?.description || "").slice(0, 500),
+      colors: Array.isArray(p?.colors) ? p.colors.slice(0, 12) : [],
+      sizes: Array.isArray(p?.sizes) ? p.sizes.slice(0, 12) : [],
+      stock: Number(p?.stock ?? 0),
+      isNewArrival: Boolean(p?.isNewArrival),
+      isFeatured: Boolean(p?.isFeatured)
+    }));
+    const site = req.body?.siteConfig || {};
+    const socials = Array.isArray(site?.footer?.socials) ? site.footer.socials : [];
+    const navLinks = Array.isArray(site?.header?.navLinks) ? site.header.navLinks : [];
+    const history = Array.isArray(req.body?.history) ? req.body.history.slice(-6) : [];
+    const catalogText = JSON.stringify({ products, navLinks, socials, pages: site?.pages || {}, footer: { phone: site?.footer?.phone || "", email: site?.footer?.email || "" } });
+    const system = `You are the transparent AI shopping assistant for ${BRAND.name}. Answer ONLY from the LIVE CATALOG and LIVE SITE DATA supplied below. Never invent a product, price, color, stock level, policy, social account, phone number, or feature. If the requested item is not present, clearly say it is not currently available and suggest the closest LIVE match only when one exists. Keep answers concise and useful for a customer. Prices must use the live product price and say PKR when the catalog has no other currency field. If the user asks for a specific live product, include exactly one navigation token [NAV:PRODUCT:<product id>] using its id. For internal pages use [NAV:HOME], [NAV:PRODUCTS], [NAV:CART], [NAV:LOGIN], [NAV:PROFILE], [NAV:CONTACT], or [NAV:FAQ]. For an external social link use [EXT:WHATSAPP:<url>], [EXT:TIKTOK:<url>], [EXT:INSTAGRAM:<url>] or [EXT:<PLATFORM>:<url>] using ONLY a URL supplied in the live site data. Do not output any other fake URLs or navigation tokens. LIVE SITE DATA: ${catalogText}`;
     const contents = [...history.map((m: any) => ({ role: m.role === "model" ? "model" : "user", parts: [{ text: String(m.text || m.content || "") }] })), { role: "user", parts: [{ text: message }] }];
-    const base = { systemInstruction: { parts: [{ text: `You are the transparent AI shopping assistant for ${BRAND.name}. Be concise, helpful, elegant and practical. Never claim to be human.` }] }, contents, generationConfig: { maxOutputTokens: 500 } };
+    const base = { systemInstruction: { parts: [{ text: system }] }, contents, generationConfig: { maxOutputTokens: 320 } };
     let last: any = null;
-    for (const model of ["gemini-3.5-flash", "gemini-3.6-flash", "gemini-2.5-flash"]) {
-      try { const text = await generateAI(apiKey, model, base); if (text) return reply(res, 200, { success: true, text }); }
+    for (const model of ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-2.5-flash"]) {
+      try { const text = await generateAI(apiKey, model, base); if (text) { await Activity.create({ email: "ai-assistant", action: "ai_query", details: { message: message.slice(0, 500), productCount: products.length, model } }); return reply(res, 200, { success: true, text, model }); } }
       catch (error) { last = error; console.warn(`[ai] ${model} unavailable`, error); }
     }
     console.error("[ai] all models failed", last);
@@ -172,7 +195,8 @@ export async function handleRepair(req: any, res: any): Promise<boolean> {
       if (email) {
         const { getAbandonedCartEmail } = await import("../src/utils/AtelierEmails.js");
         const normalizedEmail = String(email).trim().toLowerCase();
-        await sendMail(normalizedEmail, `${BRAND.name} | Your Selection Awaits`, getAbandonedCartEmail(displayName || "Patron"));
+        const liveProducts = Array.isArray(cartItems) ? cartItems.filter((item: any) => item?.productId || item?.id).slice(0, 4) : [];
+        await sendMail(normalizedEmail, `${BRAND.name} | Your Selection Awaits`, getAbandonedCartEmail(displayName || "Patron", liveProducts));
         await Activity.create({ email: normalizedEmail, action: "abandoned_cart", details: JSON.stringify({ total, itemCount: Array.isArray(cartItems) ? cartItems.length : 0 }) });
       }
       return reply(res, 200, { success: true });
