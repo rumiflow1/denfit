@@ -1,0 +1,10 @@
+import mongoose from "mongoose";
+import { connectDB } from "./_shared.js";
+import { BRAND } from "../src/config/brand.js";
+
+const getModel=(name:string)=>mongoose.models[name] as any;
+const sendMail=async(to:string,subject:string,html:string)=>{if(!to||!process.env.EMAIL_USER||!process.env.EMAIL_PASS)throw new Error('Email service is not configured');const nodemailer=await import('nodemailer');const transporter=nodemailer.default.createTransport({service:'gmail',auth:{user:process.env.EMAIL_USER,pass:process.env.EMAIL_PASS}});await transporter.sendMail({from:`"${BRAND.name}" <${process.env.EMAIL_USER}>`,to,subject,html});};
+export async function handleMarketingRoutes(req:any,res:any):Promise<boolean>{
+ const url=String(req.url||'').split('?')[0]; if(req.method!=='POST'||url!=='/api/marketing/promotional')return false;
+ try{await connectDB();const email=String(req.body?.email||'').trim().toLowerCase();if(!email)return res.status(400).json({success:false,error:'Email is required'});const name=String(req.body?.displayName||'Customer');const offerCode=String(req.body?.offerCode||'').trim().toUpperCase();const {getPromotionalEmail}=await import('../src/utils/AtelierEmails.js');await sendMail(email,`${BRAND.name} | Exclusive Collection`,getPromotionalEmail(name,offerCode));return res.status(200).json({success:true});}catch(error){console.error('[promotional]',error);return res.status(500).json({success:false,error:'Promotional email could not be sent'});}
+}
