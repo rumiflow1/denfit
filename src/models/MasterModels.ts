@@ -1,17 +1,11 @@
 import "dotenv/config";
 import mongoose from "mongoose";
 
-// Vercel/Node loads this module before Express begins serving requests. Establish
-// one shared connection and wait for it so database-backed routes do not race the
-// initial connection or rely on Mongoose command buffering.
 const MONGODB_URI = process.env.MONGODB_URI;
 const globalForDb = globalThis as typeof globalThis & { __denfitMongo?: Promise<typeof mongoose> | null };
 
 if (MONGODB_URI && !globalForDb.__denfitMongo) {
-  globalForDb.__denfitMongo = mongoose.connect(MONGODB_URI, {
-    serverSelectionTimeoutMS: 10000,
-    maxPoolSize: 10,
-  });
+  globalForDb.__denfitMongo = mongoose.connect(MONGODB_URI, { serverSelectionTimeoutMS: 10000, maxPoolSize: 10 });
 }
 
 export const dbReady = globalForDb.__denfitMongo || Promise.resolve(mongoose);
@@ -21,7 +15,7 @@ export const ProductSchema = new mongoose.Schema({
   name: { type: String, required: true }, price: { type: Number, required: true }, originalPrice: Number, discount: Number,
   image: { type: String, required: true }, images: [String], category: { type: String, required: true }, collectionName: String,
   isNewArrival: { type: Boolean, default: false }, showOnHomePage: { type: Boolean, default: false }, isFeatured: { type: Boolean, default: false },
-  description: String, stock: { type: Number, default: 0 }, sizes: [String], colors: [String], details: [String], fabric: String, style: String,
+  isTrending: { type: Boolean, default: false }, isSearchTrending: { type: Boolean, default: false }, description: String, stock: { type: Number, default: 0 }, sizes: [String], colors: [String], details: [String], fabric: String, style: String,
   sizeGuide: String, shippingPolicy: String, fabricCare: String, styleNotes: String, lowStockAlert: { type: Number, default: 5 },
   reviews: [{ user: String, profession: String, rating: Number, comment: String, date: { type: Date, default: Date.now } }]
 }, { timestamps: true, toJSON: { transform: (doc, ret) => { (ret as any).id = ret._id.toString(); return ret; } } });
@@ -35,7 +29,15 @@ export const CustomerLogSchema = new mongoose.Schema({ userId: String, email: St
 
 export const OrderSchema = new mongoose.Schema({
   userId: { type: String, required: false }, email: { type: String, required: true }, fullName: { type: String, required: true }, phone: String,
-  items: Array, totalAmount: Number, status: { type: String, default: "Pending" }, shippingAddress: Object, shippingDetails: Object, paymentMethod: String,
+  items: Array, totalAmount: Number, subtotal: Number, discountAmount: Number, discountCode: String, shippingCost: Number,
+  currency: { type: String, default: "USD" }, paymentMethod: String,
+  status: { type: String, default: "Pending" },
+  tracking: {
+    packed: Date,
+    shipped: Date,
+    delivered: Date,
+  },
+  shippingAddress: Object, shippingDetails: Object,
   createdAt: { type: Date, default: Date.now },
 }, { toJSON: { transform: (doc, ret) => { (ret as any).id = ret._id.toString(); return ret; } } });
 
@@ -68,8 +70,11 @@ export const Config = mongoose.models.Config || mongoose.model("Config", ConfigS
 export const SiteConfig = mongoose.models.SiteConfig || mongoose.model("SiteConfig", ConfigSchema);
 
 export const DEFAULT_SITE_CONFIG = {
-  key: "global", announcementBar: { isVisible: true, bgColor: "linear-gradient(to right, #000, #1a1a1a)", items: [{ text: "SUMMER SALE: 40% OFF", path: "/shop" }, { text: "FREE WORLDWIDE SHIPPING", path: "/shipping" }], socials: [] },
-  header: { isVisible: true, logoText: "RUMY", logoImage: "", logoColor: "#C5A059", logoSize: "24px", logoFontFamily: "serif", navLinks: [{ label: "New Arrivals", path: "/new" }, { label: "Collections", path: "/shop" }, { label: "Our Story", path: "/story" }], search: { placeholder: "Search the catalog...", buttonText: "Search", trendingTitle: "Trending Now", trending: ["Summer Collection", "Luxury Sets"], trendingProducts: [] }, account: { loginLabel: "Identity", signupLabel: "Registry", emailLabel: "Email Address", passwordLabel: "Secure Access", loginBtnText: "Login", signupBtnText: "Signup" }, wishlist: { title: "Sanctuary", emptyText: "Your sanctuary is vacant.", btnText: "Curate Now" }, cart: { title: "Acquisitions", emptyText: "No acquisitions pending.", checkoutBtnText: "Proceed to Checkout", viewCartBtnText: "View Cart" } },
-  heroBanner: { isVisible: true, slides: [] }, newArrivals: { isVisible: true, title: "NEW ARRIVALS", tagline: "The Latest Masterpieces" }, featuredArrivals: { isVisible: true, title: "FEATURED", tagline: "Hand-Selected Perfection" },
-  featuredCollections: { isVisible: true, title: "COLLECTIONS", tagline: "Explore Our Finest Selection", items: [] }, auth: {}, account: {}, customerReviews: { isVisible: true, items: [] }, trustBadges: { isVisible: true, items: [] }, purchaseNotifications: { isVisible: true, items: [] }, footer: { isVisible: true, brandName: "RUMY", description: { content: "The definitive destination for luxury attire." }, copyright: { content: "© 2026 RUMY. ALL RIGHTS RESERVED." }, shopLinks: [], supportLinks: [], socials: [] }, aiConcierge: { isEnabled: true, brandVoice: "Sophisticated, confident, and professional", systemInstruction: "You are an AI luxury stylist for DENFIT. Be transparent that you are an AI assistant, and help users find products and understand the store.", model: "gemini-1.5-flash", welcomeMessage: "Greetings. I am your AI stylist. How may I assist your style journey today?" }, pages: { shippingPolicy: "Our luxury items are handled with extreme care.", returnPolicy: "Complimentary 30-day returns.", faq: "# FAQs\nEverything you need to know.", privacyPolicy: "Your privacy is our priority." }, elements: {}
+  key: "global",
+  announcementBar: { isVisible: true, bgColor: "linear-gradient(to right, #000, #1a1a1a)", items: [], socials: [] },
+  header: { isVisible: true, logoText: "DENFIT", logoImage: "https://www.denfit.shop/denfit-logo.svg", logoColor: "#D4AF37", logoSize: "24px", logoFontFamily: "serif", navLinks: [], search: { placeholder: "Search the collection...", buttonText: "Search", trendingTitle: "Trending Now", trending: [], trendingProducts: [] }, account: { loginLabel: "Login", signupLabel: "Signup", emailLabel: "Email Address", passwordLabel: "Secure Access", loginBtnText: "Login", signupBtnText: "Signup" } },
+  settings: { baseCurrency: "PKR", currencyOptions: ["USD", "PKR", "EUR", "GBP", "INR", "SAR", "AED"] },
+  footer: { isVisible: true, brandName: "DENFIT", description: "Premium fashion, curated for you.", copyright: "© 2026 DENFIT. All rights reserved.", shopLinks: [], supportLinks: [], socials: [] },
+  aiConcierge: { isEnabled: true, brandVoice: "Sophisticated, confident, and professional", model: "gemini-3.8-flash", welcomeMessage: "Hello. I’m your DENFIT shopping assistant." },
+  pages: {}, elements: {}
 };
