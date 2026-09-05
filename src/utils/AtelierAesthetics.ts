@@ -23,7 +23,7 @@ export const TRENDING_PIECES = [
         id: "dfede",
         name: "Featured Masterpiece",
         price: "12",
-        img: `${ATELIER_CONFIG.frontendUrl}/api/media/dfede`,
+        img: "https://images.unsplash.com/photo-1523275335684-37898b6baf30?q=80&w=800&auto=format&fit=crop",
     },
     {
         id: "silk-crimson",
