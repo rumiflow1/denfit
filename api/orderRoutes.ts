@@ -1,14 +1,10 @@
 import mongoose from "mongoose";
 import { connectDB } from "./_shared.js";
-import { BRAND, formatCurrency } from "../src/config/brand.js";
+import { BRAND } from "../src/config/brand.js";
+import { sendTransactionalMail } from "../src/utils/mail.js";
 
 const getModel = (name: string) => mongoose.models[name] as any;
-const sendMail = async (to: string, subject: string, html: string) => {
-  if (!to || !process.env.EMAIL_USER || !process.env.EMAIL_PASS) throw new Error("Email service is not configured");
-  const nodemailer = await import("nodemailer");
-  const transporter = nodemailer.default.createTransport({ service: "gmail", auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS } });
-  await transporter.sendMail({ from: `"${BRAND.name}" <${process.env.EMAIL_USER}>`, to, subject, html });
-};
+const sendMail = async (to: string, subject: string, html: string, dedupeKey = "") => sendTransactionalMail(to, subject, html, dedupeKey);
 
 const getLiveProducts = async () => {
   const Product = getModel("Product");
@@ -56,7 +52,7 @@ export async function handleOrderRoutes(req: any, res: any): Promise<boolean> {
     try {
       const products = await getLiveProducts();
       const { getOrderEmail } = await import("../src/utils/AtelierEmails.js");
-      await sendMail(order.email, `${BRAND.name} | Order Confirmed`, getOrderEmail(customerName(order), order._id.toString(), String(order.totalAmount), products, order));
+      await sendMail(order.email, `${BRAND.name} | Order Confirmed`, getOrderEmail(customerName(order), order._id.toString(), String(order.totalAmount), products, order), `order:${order._id}:confirmed`);
     } catch (emailError) { console.warn("[orders] confirmation email failed after order save", emailError); }
     return res.status(200).json({ success: true, orderId: order._id, order });
   }
@@ -79,7 +75,7 @@ export async function handleOrderRoutes(req: any, res: any): Promise<boolean> {
     if (status === "Packed") { html = getPackedEmail(customerName(order), order._id.toString(), products, currency); subject = `${BRAND.name} | Order Packed`; }
     else if (status === "Shipped" || status === "On the way") { html = getShippedEmail(customerName(order), order._id.toString(), products, currency); subject = `${BRAND.name} | Order Shipped`; }
     else if (status === "Delivered") { html = getDeliveredEmail(customerName(order), order._id.toString(), products, currency); subject = `${BRAND.name} | Order Delivered`; }
-    if (html && order.email) await sendMail(order.email, subject, html);
+    if (html && order.email) await sendMail(order.email, subject, html, `order:${order._id}:${status.toLowerCase().replace(/\s+/g, '-')}`);
   } catch (emailError) { console.warn("[orders] status email failed after status update", emailError); }
   return res.status(200).json({ success: true, order });
 }
