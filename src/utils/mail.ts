@@ -11,8 +11,8 @@ export const emailImageUrl = (value: any) => {
   if (!raw) return "";
   if (/^https?:\/\//i.test(raw)) return raw;
   if (/^\/\//.test(raw)) return `https:${raw}`;
-  if (/^\//.test(raw)) return `${BRAND.siteUrl.replace(/\/$/, "")}${raw}`;
-  return `${BRAND.siteUrl.replace(/\/$/, ")"}/${raw.replace(/^\.\//, "")}`;
+  const base = BRAND.siteUrl.replace(/\/$/, "");
+  return raw.startsWith("/") ? `${base}${raw}` : `${base}/${raw.replace(/^\.\//, "")}`;
 };
 
 export const claimEmail = async (key: string) => {
