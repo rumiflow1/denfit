@@ -7,6 +7,7 @@ import { handleOrderRoutes } from "./orderRoutes.js";
 import { handleCustomerRoutes } from "./customerRoutes.js";
 import { handleMarketingRoutes } from "./marketingRoutes.js";
 import { handleAI } from "./ai.js";
+import { handleAuthSync } from "./authSync.js";
 import { logAuthActivity } from "./activity.js";
 
 export default async function handler(req: Request, res: Response) {
@@ -14,6 +15,7 @@ export default async function handler(req: Request, res: Response) {
     try { await connectDB(); return res.status(200).json({ ok: true, database: mongoose.connection.readyState === 1 ? "connected" : "not-connected" }); }
     catch (error: any) { console.error("[health] database unavailable", error); return res.status(503).json({ ok: false, database: "unavailable", error: process.env.NODE_ENV === "production" ? "Database unavailable" : error?.message }); }
   }
+  if (await handleAuthSync(req, res)) return;
   if (await handleAI(req, res)) return;
   if (await handleOrderRoutes(req, res)) return;
   if (await handleCustomerRoutes(req, res)) return;
