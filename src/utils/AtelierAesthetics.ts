@@ -1,5 +1,4 @@
-const FALLBACK_BRAND = "DENFIT";
-const FALLBACK_URL = "https://www.denfit.shop";
+import { BRAND } from "../config/brand.js";
 
 export const ATELIER_THEMES = {
     signup: { primary: "#1A5FB4", accent: "#C5A059" },
@@ -10,8 +9,9 @@ export const ATELIER_THEMES = {
 };
 
 export const ATELIER_CONFIG = {
-    brandName: process.env.BRAND_NAME || FALLBACK_BRAND,
-    frontendUrl: (process.env.APP_URL || FALLBACK_URL).replace(/\/$/, ""),
+    brandName: BRAND.name,
+    frontendUrl: BRAND.siteUrl.replace(/\/$/, ""),
+    supportEmail: BRAND.supportEmail,
     fonts: {
         heading: "'Playfair Display', serif",
         body: "'Inter', sans-serif"
@@ -23,7 +23,7 @@ export const TRENDING_PIECES = [
         id: "dfede",
         name: "Featured Masterpiece",
         price: "12",
-        img: "https://images.unsplash.com/photo-1523275335684-37898b6baf30?q=80&w=800&auto=format&fit=crop",
+        img: `${ATELIER_CONFIG.frontendUrl}/api/media/dfede`,
     },
     {
         id: "silk-crimson",
