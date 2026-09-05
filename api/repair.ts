@@ -17,7 +17,7 @@ async function sendMail(to: string, subject: string, html: string) {
 
 async function generateAI(apiKey: string, model: string, body: any) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 9000);
+  const timer = setTimeout(() => controller.abort(), 5500);
   try {
     const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`, { method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal, body: JSON.stringify(body) });
     const data: any = await r.json().catch(() => ({}));
@@ -44,6 +44,45 @@ async function getFirebaseAdmin() {
   throw new Error("Password recovery service is not configured");
 }
 
+const normalizeProducts = (items: any[]) => items.filter(Boolean).map((p: any) => ({
+  id: String(p?.id || p?._id || ""),
+  name: String(p?.name || p?.title || ""),
+  price: Number(p?.price || 0),
+  currency: String(p?.currency || "PKR"),
+  image: String(p?.image || p?.images?.[0] || ""),
+  images: Array.isArray(p?.images) ? p.images.slice(0, 4) : [],
+  category: String(p?.category || ""),
+  description: String(p?.description || "").slice(0, 500),
+  colors: Array.isArray(p?.colors) ? p.colors.slice(0, 12) : [],
+  sizes: Array.isArray(p?.sizes) ? p.sizes.slice(0, 12) : [],
+  stock: Number(p?.stock ?? 0),
+  isNewArrival: Boolean(p?.isNewArrival),
+  isFeatured: Boolean(p?.isFeatured)
+}));
+
+const getLiveStoreSnapshot = async () => {
+  const Product = getModel("Product");
+  const SiteConfig = getModel("SiteConfig");
+  const [productRows, config] = await Promise.all([
+    Product ? Product.find({}).sort({ isFeatured: -1, isNewArrival: -1, createdAt: -1 }).limit(80).lean() : [],
+    SiteConfig ? SiteConfig.findOne({ key: "global" }).lean() : null
+  ]);
+  const socials = [
+    ...(Array.isArray((config as any)?.footer?.socials) ? (config as any).footer.socials : []),
+    ...(Array.isArray((config as any)?.footer?.socialIcons) ? (config as any).footer.socialIcons : []),
+    ...(Array.isArray((config as any)?.announcementBar?.socials) ? (config as any).announcementBar.socials : []),
+    ...(Array.isArray((config as any)?.announcementBar?.socialIcons) ? (config as any).announcementBar.socialIcons : [])
+  ].filter((s: any) => s?.url || s?.link).map((s: any) => ({ platform: String(s.platform || s.icon || ""), url: String(s.url || s.link || "") }));
+  return {
+    products: normalizeProducts(Array.isArray(productRows) ? productRows : []),
+    navLinks: (config as any)?.header?.navLinks || (config as any)?.header?.menuItems || [],
+    socials,
+    pages: (config as any)?.pages || {},
+    settings: (config as any)?.settings || {},
+    footer: { phone: (config as any)?.footer?.phone || "", email: (config as any)?.footer?.email || "", description: (config as any)?.footer?.description || "" }
+  };
+};
+
 export async function handleRepair(req: any, res: any): Promise<boolean> {
   const url = (req.url || "").split("?")[0];
 
@@ -53,38 +92,31 @@ export async function handleRepair(req: any, res: any): Promise<boolean> {
     if (!apiKey) return reply(res, 503, { success: false, error: "AI service is not configured" });
     if (!message) return reply(res, 400, { success: false, error: "Message is required" });
 
-    // The browser sends the current live catalog/config snapshot. This keeps the assistant
-    // synchronized with admin product/config changes without retraining or hardcoded catalog data.
-    const rawProducts = Array.isArray(req.body?.products) ? req.body.products : [];
-    const products = rawProducts.slice(0, 80).map((p: any) => ({
-      id: String(p?.id || p?._id || ""),
-      name: String(p?.name || p?.title || ""),
-      price: Number(p?.price || 0),
-      image: String(p?.image || p?.images?.[0] || ""),
-      category: String(p?.category || ""),
-      collectionName: String(p?.collectionName || ""),
-      description: String(p?.description || "").slice(0, 500),
-      colors: Array.isArray(p?.colors) ? p.colors.slice(0, 12) : [],
-      sizes: Array.isArray(p?.sizes) ? p.sizes.slice(0, 12) : [],
-      stock: Number(p?.stock ?? 0),
-      isNewArrival: Boolean(p?.isNewArrival),
-      isFeatured: Boolean(p?.isFeatured)
-    }));
-    const site = req.body?.siteConfig || {};
-    const socials = Array.isArray(site?.footer?.socials) ? site.footer.socials : [];
-    const navLinks = Array.isArray(site?.header?.navLinks) ? site.header.navLinks : [];
-    const history = Array.isArray(req.body?.history) ? req.body.history.slice(-6) : [];
-    const catalogText = JSON.stringify({ products, navLinks, socials, pages: site?.pages || {}, footer: { phone: site?.footer?.phone || "", email: site?.footer?.email || "" } });
-    const system = `You are the transparent AI shopping assistant for ${BRAND.name}. Answer ONLY from the LIVE CATALOG and LIVE SITE DATA supplied below. Never invent a product, price, color, stock level, policy, social account, phone number, or feature. If the requested item is not present, clearly say it is not currently available and suggest the closest LIVE match only when one exists. Keep answers concise and useful for a customer. Prices must use the live product price and say PKR when the catalog has no other currency field. If the user asks for a specific live product, include exactly one navigation token [NAV:PRODUCT:<product id>] using its id. For internal pages use [NAV:HOME], [NAV:PRODUCTS], [NAV:CART], [NAV:LOGIN], [NAV:PROFILE], [NAV:CONTACT], or [NAV:FAQ]. For an external social link use [EXT:WHATSAPP:<url>], [EXT:TIKTOK:<url>], [EXT:INSTAGRAM:<url>] or [EXT:<PLATFORM>:<url>] using ONLY a URL supplied in the live site data. Do not output any other fake URLs or navigation tokens. LIVE SITE DATA: ${catalogText}`;
-    const contents = [...history.map((m: any) => ({ role: m.role === "model" ? "model" : "user", parts: [{ text: String(m.text || m.content || "") }] })), { role: "user", parts: [{ text: message }] }];
-    const base = { systemInstruction: { parts: [{ text: system }] }, contents, generationConfig: { maxOutputTokens: 320 } };
-    let last: any = null;
-    for (const model of ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-2.5-flash"]) {
-      try { const text = await generateAI(apiKey, model, base); if (text) { await Activity.create({ email: "ai-assistant", action: "ai_query", details: { message: message.slice(0, 500), productCount: products.length, model } }); return reply(res, 200, { success: true, text, model }); } }
-      catch (error) { last = error; console.warn(`[ai] ${model} unavailable`, error); }
+    try {
+      // Always read MongoDB here. The browser snapshot is intentionally not authoritative,
+      // so an admin product/config/social change is visible to the AI on the next request.
+      const live = await getLiveStoreSnapshot();
+      const history = Array.isArray(req.body?.history) ? req.body.history.slice(-4) : [];
+      const catalogText = JSON.stringify(live);
+      const system = `You are the customer-facing AI shopping assistant for ${BRAND.name}. Use the LIVE STORE DATA below as your source of truth. You may naturally compose, explain, compare and recommend using the supplied data; you do NOT need an exact sentence from the website. Never invent a product, price, stock, color, size, policy, social account, phone number, URL, discount or store feature. If the website data does not establish an answer, say that you cannot confirm it and offer the most useful confirmed alternative. For styling questions, make a practical recommendation only from the live products and their attributes. For store-policy questions, explain the supplied policy in clear customer language. If the user asks to see/open a live product, output exactly one token [NAV:PRODUCT:<id>] for that product. For internal destinations use [NAV:HOME], [NAV:PRODUCTS], [NAV:CART], [NAV:LOGIN], [NAV:PROFILE], [NAV:CONTACT], or [NAV:FAQ]. For a social account use [EXT:WHATSAPP:<url>], [EXT:TIKTOK:<url>], [EXT:INSTAGRAM:<url>] or [EXT:<PLATFORM>:<url>] using only a live URL in the data. Keep responses concise, direct and helpful. LIVE STORE DATA: ${catalogText}`;
+      const contents = [...history.map((m: any) => ({ role: m.role === "model" ? "model" : "user", parts: [{ text: String(m.text || m.content || "") }] })), { role: "user", parts: [{ text: message }] }];
+      const base = { systemInstruction: { parts: [{ text: system }] }, contents, generationConfig: { maxOutputTokens: 280 } };
+      let last: any = null;
+      for (const model of ["gemini-3.8-flash", "gemini-2.5-flash"]) {
+        try {
+          const text = await generateAI(apiKey, model, base);
+          if (text) {
+            await Activity.create({ email: "ai-assistant", action: "ai_query", details: { message: message.slice(0, 500), productCount: live.products.length, model } });
+            return reply(res, 200, { success: true, text, model });
+          }
+        } catch (error) { last = error; console.warn(`[ai] ${model} unavailable`, error); }
+      }
+      console.error("[ai] all models failed", last);
+      return reply(res, 503, { success: false, error: "AI service is temporarily unavailable. Please try again." });
+    } catch (error) {
+      console.error("[ai] live store snapshot failed", error);
+      return reply(res, 503, { success: false, error: "Live store data is temporarily unavailable." });
     }
-    console.error("[ai] all models failed", last);
-    return reply(res, 503, { success: false, error: "AI service is temporarily unavailable. Please try again." });
   }
 
   if (req.method === "GET" && /^\/api\/products\/[^/]+$/.test(url)) {
@@ -105,18 +137,73 @@ export async function handleRepair(req: any, res: any): Promise<boolean> {
       if (!codeValue) return reply(res, 400, { success: false, valid: false, error: "Discount code is required" });
       const DiscountCode = getModel("DiscountCode");
       if (!DiscountCode) return reply(res, 503, { success: false, valid: false, error: "Discount service unavailable" });
-      const code = await DiscountCode.findOne({ name: codeValue }).lean();
+      const code: any = await DiscountCode.findOne({ name: codeValue }).lean();
       if (!code) return reply(res, 200, { success: false, valid: false, error: "Invalid discount code" });
       const now = Date.now();
       const start = new Date(code.startDate).getTime();
       const end = new Date(code.endDate).getTime();
       if (code.isActive === false || !Number.isFinite(start) || !Number.isFinite(end) || now < start || now > end) return reply(res, 200, { success: false, valid: false, error: "This discount is not currently active" });
       const minimum = Number(code.minOrderAmount || 0);
-      if (minimum > 0 && orderAmount < minimum) return reply(res, 200, { success: false, valid: false, error: `Minimum order amount is ${minimum}` });
-      const percent = Math.max(0, Math.min(100, Number(code.percent || 0)));
-      if (!percent) return reply(res, 200, { success: false, valid: false, error: "This discount has no valid percentage" });
+      if (minimum > 0 && (!Number.isFinite(orderAmount) || orderAmount < minimum)) return reply(res, 200, { success: false, valid: false, error: `Minimum order amount is ${minimum}` });
+      const percent = Math.max(0, Math.min(100, Number(code.percent ?? code.discount ?? 0)));
+      if (!Number.isFinite(percent) || percent <= 0) return reply(res, 200, { success: false, valid: false, error: "This discount has no valid percentage" });
       return reply(res, 200, { success: true, valid: true, code: code.name, percent, discount: percent, minOrderAmount: minimum, startDate: code.startDate, endDate: code.endDate });
     } catch (error) { console.error("[discount-verify]", error); return reply(res, 500, { success: false, valid: false, error: "Unable to verify discount" }); }
+  }
+
+  if (req.method === "POST" && url === "/api/orders/create") {
+    try {
+      const { items, totalAmount, shippingDetails, userId } = req.body || {};
+      if (!Array.isArray(items) || items.length === 0) return reply(res, 400, { success: false, error: "Missing or invalid items" });
+      const Order = getModel("Order");
+      if (!Order) return reply(res, 503, { success: false, error: "Order service unavailable" });
+      const order = await Order.create({ userId: userId || "GUEST", items, totalAmount: Number(totalAmount || 0), shippingDetails });
+      try {
+        const live = await getLiveStoreSnapshot();
+        const { getOrderEmail } = await import("../src/utils/AtelierEmails.js");
+        const email = String(shippingDetails?.email || "").trim();
+        if (email) await sendMail(email, `${BRAND.name} | Order Confirmed`, getOrderEmail(shippingDetails?.firstName || "Customer", order._id.toString(), String(totalAmount || 0), live.products.slice(0, 4)));
+      } catch (emailError) { console.warn("[order-email] failed after order was saved", emailError); }
+      return reply(res, 200, { success: true, orderId: order._id });
+    } catch (error) { console.error("[order-create]", error); return reply(res, 500, { success: false, error: "Unable to place order" }); }
+  }
+
+  if (req.method === "POST" && url === "/api/orchestrate/dispatch-email") {
+    try {
+      const { email, displayName, actionType, orderId } = req.body || {};
+      if (!email) return reply(res, 400, { success: false, error: "Email is required" });
+      const live = await getLiveStoreSnapshot();
+      const { getAbandonedCartEmail, getShippedEmail, getDeliveredEmail, getWishlistEmail } = await import("../src/utils/AtelierEmails.js");
+      let html = "";
+      if (actionType === "ABANDONED_CART") html = getAbandonedCartEmail(displayName || "Customer", live.products.slice(0, 4));
+      else if (actionType === "SHIPPED") html = getShippedEmail(displayName || "Customer", orderId || "N/A");
+      else if (actionType === "DELIVERED") html = getDeliveredEmail(displayName || "Customer", orderId || "N/A", live.products.slice(0, 4));
+      else if (actionType === "WISHLIST") html = getWishlistEmail(displayName || "Customer", live.products.slice(0, 4));
+      else return reply(res, 400, { success: false, error: "Unknown email action" });
+      await sendMail(String(email).trim().toLowerCase(), `${BRAND.name} | ${actionType === "SHIPPED" ? "Order In Transit" : actionType === "DELIVERED" ? "Order Delivered" : actionType === "WISHLIST" ? "Wishlist Reminder" : "Your Selection Awaits"}`, html);
+      return reply(res, 200, { success: true });
+    } catch (error) { console.error("[dispatch-email]", error); return reply(res, 500, { success: false, error: "Dispatch failed" }); }
+  }
+
+  if (req.method === "GET" && url === "/api/cron/abandoned-cart") {
+    try {
+      const User = getModel("User");
+      if (!User) return reply(res, 503, { success: false, error: "User service unavailable" });
+      const abandonedUsers = await User.find({ "cart.0": { $exists: true }, cartEmailSent: false }).limit(50).lean();
+      const live = await getLiveStoreSnapshot();
+      let sent = 0;
+      for (const user of abandonedUsers as any[]) {
+        if (!user.email) continue;
+        try {
+          const { getAbandonedCartEmail } = await import("../src/utils/AtelierEmails.js");
+          const productsByCart = live.products.filter((p: any) => (user.cart || []).some((item: any) => String(item.productId) === String(p.id))).slice(0, 4);
+          await sendMail(String(user.email).toLowerCase(), `${BRAND.name} | Your Selection Awaits`, getAbandonedCartEmail(user.displayName || "Customer", productsByCart.length ? productsByCart : live.products.slice(0, 4)));
+          await User.updateOne({ _id: user._id }, { $set: { cartEmailSent: true } });
+          sent++;
+        } catch (emailError) { console.warn("[cron-abandoned] email failed", emailError); }
+      }
+      return reply(res, 200, { success: true, processed: abandonedUsers.length, sent });
+    } catch (error) { console.error("[cron-abandoned]", error); return reply(res, 500, { success: false, error: "Cron failed" }); }
   }
 
   if (req.method === "POST" && url === "/api/admin/customers/log") {
@@ -195,8 +282,10 @@ export async function handleRepair(req: any, res: any): Promise<boolean> {
       if (email) {
         const { getAbandonedCartEmail } = await import("../src/utils/AtelierEmails.js");
         const normalizedEmail = String(email).trim().toLowerCase();
-        const liveProducts = Array.isArray(cartItems) ? cartItems.filter((item: any) => item?.productId || item?.id).slice(0, 4) : [];
-        await sendMail(normalizedEmail, `${BRAND.name} | Your Selection Awaits`, getAbandonedCartEmail(displayName || "Patron", liveProducts));
+        const live = await getLiveStoreSnapshot();
+        const cartProductIds = Array.isArray(cartItems) ? cartItems.map((item: any) => String(item?.productId || item?.id || "")) : [];
+        const liveProducts = live.products.filter((p: any) => cartProductIds.includes(String(p.id))).slice(0, 4);
+        await sendMail(normalizedEmail, `${BRAND.name} | Your Selection Awaits`, getAbandonedCartEmail(displayName || "Customer", liveProducts.length ? liveProducts : live.products.slice(0, 4)));
         await Activity.create({ email: normalizedEmail, action: "abandoned_cart", details: JSON.stringify({ total, itemCount: Array.isArray(cartItems) ? cartItems.length : 0 }) });
       }
       return reply(res, 200, { success: true });
