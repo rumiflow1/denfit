@@ -32,6 +32,8 @@ export const atelierBase = (content: string, previewText: string, themeColor = '
             <span style="color:#555;padding:0 8px;">•</span>
             <a href="${ATELIER_CONFIG.frontendUrl}/support?tab=returns" style="color:#D4AF37;text-decoration:none;">Returns</a>
             <span style="color:#555;padding:0 8px;">•</span>
+            <a href="${ATELIER_CONFIG.frontendUrl}/support?tab=faq" style="color:#D4AF37;text-decoration:none;">FAQs</a>
+            <span style="color:#555;padding:0 8px;">•</span>
             <a href="mailto:${ATELIER_CONFIG.supportEmail}" style="color:#D4AF37;text-decoration:none;">Support</a>
           </div>
           <div style="margin-top:18px;font-size:9px;color:#666;line-height:1.7;">&copy; 2026 ${ATELIER_CONFIG.brandName}. All Rights Reserved.</div>
