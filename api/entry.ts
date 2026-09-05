@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import app from "./index.js";
 import { connectDB } from "./_shared.js";
 import { handleRepair } from "./repair.js";
+import { handleOrderRoutes } from "./orderRoutes.js";
 import { logAuthActivity } from "./activity.js";
 
 export default async function handler(req: Request, res: Response) {
@@ -16,7 +17,10 @@ export default async function handler(req: Request, res: Response) {
     }
   }
 
-  // Routes that do not require MongoDB must remain available during a transient DB outage.
+  // High-value order routes own their complete data contract before the legacy Express app.
+  if (await handleOrderRoutes(req, res)) return;
+
+  // Repair routes are intentionally checked before the legacy app so fixed endpoints win.
   if (await handleRepair(req, res)) return;
 
   try {
