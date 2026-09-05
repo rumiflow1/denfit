@@ -4,6 +4,7 @@ import app from "./index.js";
 import { connectDB } from "./_shared.js";
 import { handleRepair } from "./repair.js";
 import { handleOrderRoutes } from "./orderRoutes.js";
+import { handleAI } from "./ai.js";
 import { logAuthActivity } from "./activity.js";
 
 export default async function handler(req: Request, res: Response) {
@@ -17,10 +18,9 @@ export default async function handler(req: Request, res: Response) {
     }
   }
 
-  // High-value order routes own their complete data contract before the legacy Express app.
+  // AI has a browser-data fallback and must not be blocked by a transient MongoDB outage.
+  if (await handleAI(req, res)) return;
   if (await handleOrderRoutes(req, res)) return;
-
-  // Repair routes are intentionally checked before the legacy app so fixed endpoints win.
   if (await handleRepair(req, res)) return;
 
   try {
