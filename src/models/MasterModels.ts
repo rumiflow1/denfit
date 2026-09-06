@@ -32,7 +32,9 @@ export const OrderSchema = new mongoose.Schema({
   items: Array, totalAmount: Number, subtotal: Number, discountAmount: Number, discountCode: String, shippingCost: Number,
   currency: { type: String, default: "USD" }, paymentMethod: String,
   status: { type: String, default: "Pending" },
+  trackingNumber: { type: String, index: true },
   tracking: {
+    confirmed: Date,
     packed: Date,
     shipped: Date,
     delivered: Date,
