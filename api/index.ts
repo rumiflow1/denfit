@@ -69,7 +69,7 @@ interface IReview {
   rating?: number;
   isManual?: boolean;
   source?: 'customer' | 'editorial';
-  status?: 'pending' | 'approved' | 'rejected';
+  status?: 'pending' | 'approved' | 'rejected' | 'hidden';
   createdAt?: Date;
 }
 
@@ -235,7 +235,7 @@ const ReviewSchema = new Schema<IReview>(
     userId: { type: String },
     isManual: { type: Boolean, default: false },
     source: { type: String, enum: ['customer', 'editorial'], default: 'customer' },
-    status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
+    status: { type: String, enum: ['pending', 'approved', 'rejected', 'hidden'], default: 'pending' },
     createdAt: { type: Date, default: Date.now },
   },
   { _id: false }
@@ -562,9 +562,10 @@ app.post("/api/products/:id/reviews", async (req: Request, res: Response) => {
     }
     const product:any = await Product.findById(req.params.id);
     if (!product) return res.status(404).json({ success: false, error: "Product not found" });
-    product.reviews.push({ customerName: cleanName, email: cleanEmail, userId: String(userId || ""), comment: cleanComment, rating: score, isManual: false, source: "customer", status: "pending", createdAt: new Date() });
+    const review = { _id: new mongoose.Types.ObjectId(), customerName: cleanName, email: cleanEmail, userId: String(userId || ""), comment: cleanComment, rating: score, isManual: false, source: "customer", status: "pending", createdAt: new Date() };
+    product.reviews.push(review);
     await product.save();
-    res.status(201).json({ success: true, message: "Your review is awaiting approval." });
+    res.status(201).json({ success: true, review, message: "Review added" });
   } catch (error) {
     console.error("[reviews] submission failed", error);
     res.status(500).json({ success: false, error: "Review could not be submitted" });
@@ -606,7 +607,7 @@ app.post("/api/admin/products/:id/reviews", async (req: Request, res: Response) 
 app.patch("/api/admin/reviews/:productId/:reviewId", async (req: Request, res: Response) => {
   try {
     const { status } = req.body || {};
-    if (!["pending","approved","rejected"].includes(String(status))) return res.status(400).json({ success:false, error:"Invalid review status" });
+    if (!["pending","approved","rejected","hidden"].includes(String(status))) return res.status(400).json({ success:false, error:"Invalid review status" });
     const product:any = await Product.findById(req.params.productId);
     if (!product) return res.status(404).json({ success:false, error:"Product not found" });
     const review:any = product.reviews.id(req.params.reviewId);
@@ -617,6 +618,22 @@ app.patch("/api/admin/reviews/:productId/:reviewId", async (req: Request, res: R
   } catch (error) {
     res.status(500).json({ success:false, error:"Review status could not be updated" });
   }
+});
+
+app.put("/api/admin/reviews/:productId/:reviewId", async (req: Request, res: Response) => {
+  try {
+    const product:any = await Product.findById(req.params.productId);
+    if (!product) return res.status(404).json({ success:false, error:"Product not found" });
+    const review:any = product.reviews.id(req.params.reviewId);
+    if (!review) return res.status(404).json({ success:false, error:"Review not found" });
+    const { customerName, comment, rating, status } = req.body || {};
+    if (customerName !== undefined) review.customerName = String(customerName).trim();
+    if (comment !== undefined) review.comment = String(comment).trim();
+    if (rating !== undefined) { const score=Number(rating); if (!Number.isFinite(score)||score<1||score>5) return res.status(400).json({success:false,error:"Rating must be 1 to 5"}); review.rating=score; }
+    if (status !== undefined && ["pending","approved","rejected","hidden"].includes(String(status))) review.status = status;
+    await product.save();
+    res.json({ success:true, review });
+  } catch (error) { res.status(500).json({ success:false, error:"Review could not be updated" }); }
 });
 
 app.delete("/api/admin/reviews/:productId/:reviewId", async (req: Request, res: Response) => {
