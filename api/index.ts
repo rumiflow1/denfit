@@ -19,8 +19,8 @@ import {
   getWishlistEmail,
   getShippedEmail,
   getDeliveredEmail,
+  getStatusEmail,
 } from "../src/utils/AtelierEmails.js";
-import { OrderSchema } from "../src/models/MasterModels.js";
 import { sendTransactionalMail } from "../src/utils/mail.js";
 
 dotenv.config();
@@ -58,6 +58,8 @@ interface IElement {
   bgColor?: string;
   isVisible: boolean;
 }
+
+interface IBranding { brandName?: string; name?: string; logoUrl?: string; supportEmail?: string; }
 
 interface IReview {
   customerName?: string;
@@ -112,6 +114,7 @@ export interface IUser extends Document {
   activity: IUserActivity[];
   cart: ICartItem[];
   cartEmailSent: boolean;
+  lastLoginEmailSentAt?: Date;
 }
 
 interface IOrderItem {
@@ -153,6 +156,7 @@ export interface ISiteConfig extends Document {
     bgColor?: string;
     textColor?: string;
   };
+  branding?: IBranding;
   header?: {
     logoText?: IElement;
     menuItems?: {
@@ -272,6 +276,7 @@ const OrderItemSchema = new Schema<IOrderItem>(
 const SiteConfigSchema = new Schema<ISiteConfig>(
   {
     key: { type: String, default: "global", unique: true },
+    branding: { brandName: { type: String, default: process.env.BRAND_NAME || "DENFIT" }, name: { type: String, default: process.env.BRAND_NAME || "DENFIT" }, logoUrl: { type: String, default: process.env.BRAND_LOGO_URL || "" }, supportEmail: { type: String, default: process.env.SUPPORT_EMAIL || "" } },
     announcementBar: {
       mainText: ElementSchema,
       socialIcons: [{ icon: String, link: String }],
@@ -338,6 +343,7 @@ const UserSchema = new Schema<IUser>({
   activity: { type: [UserActivitySchema], default: () => [] },
   cart: [CartItemSchema],
   cartEmailSent: { type: Boolean, default: false },
+  lastLoginEmailSentAt: Date,
 }, { timestamps: true });
 
 const MediaSchema = new Schema<IMedia>({
@@ -373,7 +379,8 @@ const NewsletterSubscriptionSchema = new Schema<INewsletterSubscription>({
 const User: Model<IUser> = (mongoose.models.User as Model<IUser>) || mongoose.model<IUser>("User", UserSchema);
 const Product: Model<IProduct> = (mongoose.models.Product as Model<IProduct>) || mongoose.model<IProduct>("Product", ProductSchema);
 const SiteConfig: Model<ISiteConfig> = (mongoose.models.SiteConfig as Model<ISiteConfig>) || mongoose.model<ISiteConfig>("SiteConfig", SiteConfigSchema);
-const Order: Model<IOrder> = (mongoose.models.Order as Model<IOrder>) || mongoose.model<IOrder>("Order", OrderSchema);
+const LocalOrderSchema = new Schema<any>({ userId:String, items:{type:[OrderItemSchema],default:()=>[]}, totalAmount:{type:Number,default:0}, status:{type:String,default:"Pending"}, shippingDetails:{ firstName:String,lastName:String,email:String,phone:String,address:{line1:String,line2:String,city:String,state:String,postalCode:String,country:String} }, currency:{type:String,default:"PKR"}, trackingNumber:String, statusHistory:{type:[{status:String,at:{type:Date,default:Date.now}}],default:()=>[]} },{timestamps:true});
+const Order: Model<IOrder> = (mongoose.models.Order as Model<IOrder>) || mongoose.model<IOrder>("Order", LocalOrderSchema);
 const Media: Model<IMedia> = (mongoose.models.Media as Model<IMedia>) || mongoose.model<IMedia>("Media", MediaSchema);
 const DiscountCode: Model<IDiscountCode> = (mongoose.models.DiscountCode as Model<IDiscountCode>) || mongoose.model<IDiscountCode>("DiscountCode", DiscountCodeSchema);
 const ContactMessage: Model<IContactMessage> = (mongoose.models.ContactMessage as Model<IContactMessage>) || mongoose.model<IContactMessage>("ContactMessage", ContactMessageSchema);
@@ -396,11 +403,15 @@ app.post("/api/ai/stylist", async (req: Request, res: Response) => {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) return res.status(500).json({ error: "AI Key Missing" });
 
-    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+    const model = process.env.GEMINI_TEXT_MODEL || "gemini-2.5-flash";
+    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${apiKey}`;
     
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 25000);
     const response = await globalThis.fetch(API_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
       body: JSON.stringify({
         contents: [
           {
@@ -416,8 +427,10 @@ app.post("/api/ai/stylist", async (req: Request, res: Response) => {
         generationConfig: { temperature: 0.7, topP: 0.95, topK: 40, maxOutputTokens: 1024 }
       }),
     });
+    clearTimeout(timeout);
     const data: any = await response.json();
-    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "Processing...";
+    if (!response.ok) throw new Error(data?.error?.message || "Stylist service unavailable");
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "I’m unable to respond right now. Please try again in a moment.";
     res.json({ text });
   } catch (error) {
     console.error("/api/ai/stylist error:", error);
@@ -442,33 +455,22 @@ app.post("/api/auth/sync", async (req: Request, res: Response) => {
         ? "admin"
         : "user";
 
+    const existingUser = await User.findOne({ uid });
+    const isActuallyNew = !existingUser;
     const user = await User.findOneAndUpdate(
       { uid },
       { email: email.toLowerCase(), displayName, photoURL, role, lastLogin: new Date() },
       { upsert: true, new: true }
     );
 
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
-    });
-
-    if (isNewUser) {
-      const emailHtml = getSignupEmail(displayName || "Patron");
-      await transporter.sendMail({
-        from: `"DENFIT" <${process.env.EMAIL_USER}>`,
-        to: email,
-        subject: "Welcome to the Inner Circle",
-        html: emailHtml,
-      });
-    } else {
-      const emailHtml = getLoginEmail(displayName || "Patron");
-      await transporter.sendMail({
-        from: `"DENFIT Security" <${process.env.EMAIL_USER}>`,
-        to: email,
-        subject: "Sovereign Access Detected",
-        html: emailHtml,
-      });
+    const cooldownMs = 5 * 60 * 1000;
+    const canSendLoginNotice = !user.lastLoginEmailSentAt || Date.now() - new Date(user.lastLoginEmailSentAt).getTime() > cooldownMs;
+    if (isActuallyNew || (isNewUser && !existingUser)) {
+      await sendTransactionalMail(email, `${process.env.BRAND_NAME || "DENFIT"} | Welcome`, getSignupEmail(displayName || "Customer"), `signup:${uid}`);
+    } else if (canSendLoginNotice) {
+      await sendTransactionalMail(email, `${process.env.BRAND_NAME || "DENFIT"} | Account sign-in`, getLoginEmail(displayName || "Customer"), `login:${uid}:${Math.floor(Date.now()/cooldownMs)}`);
+      user.lastLoginEmailSentAt = new Date();
+      await user.save();
     }
 
     res.json({ success: true, user });
@@ -510,6 +512,26 @@ app.delete("/api/admin/products/:id", async (req: Request, res: Response) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false });
+  }
+});
+
+app.get("/api/products/:id", async (req: Request, res: Response) => {
+  try {
+    const product = await Product.findById(req.params.id);
+    if (!product) return res.status(404).json({ error: "Product not found" });
+    res.json(product);
+  } catch (error) {
+    res.status(400).json({ error: "Invalid product id" });
+  }
+});
+
+app.put("/api/admin/products/:id", async (req: Request, res: Response) => {
+  try {
+    const product = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
+    if (!product) return res.status(404).json({ error: "Product not found" });
+    res.json({ success: true, product });
+  } catch (error) {
+    res.status(500).json({ success: false, error: "Product could not be updated" });
   }
 });
 
@@ -671,15 +693,23 @@ app.put("/api/admin/orders/:id/status", async (req: Request, res: Response) => {
     const { id } = req.params;
     const { status } = req.body;
 
-    const validStatuses = ["Pending", "Confirmed", "Shipped", "Delivered", "Cancelled"];
-    if (!validStatuses.includes(status)) {
-      return res.status(400).json({ error: "Invalid status" });
+    const validStatuses = ["Pending", "Confirmed", "Packed", "On the Way", "Shipped", "Delivered", "Cancelled"];
+    if (!validStatuses.includes(status)) return res.status(400).json({ error: "Invalid status" });
+    const existing:any = await Order.findById(id);
+    if (!existing) return res.status(404).json({ error: "Order not found" });
+    const changed = existing.status !== status;
+    existing.status = status;
+    if (!existing.trackingNumber && ["Packed","On the Way","Shipped"].includes(status)) existing.trackingNumber = `DNF-${crypto.randomInt(100000,999999)}`;
+    existing.statusHistory = [...(existing.statusHistory || []), ...(changed ? [{ status, at:new Date() }] : [])];
+    await existing.save();
+    if (changed && existing.shippingDetails?.email) {
+      try {
+        const customer = existing.shippingDetails?.firstName || "Customer";
+        const subject = `${process.env.BRAND_NAME || "DENFIT"} | Order ${status}`;
+        await sendTransactionalMail(existing.shippingDetails.email, subject, getStatusEmail(customer, String(existing._id), status, existing.trackingNumber || "", existing.totalAmount, (existing as any).currency || "PKR"), `order-status:${existing._id}:${status}`);
+      } catch (mailError) { console.warn("[order-status] email failed", mailError); }
     }
-
-    const order = await Order.findByIdAndUpdate(id, { status }, { new: true });
-    if (!order) return res.status(404).json({ error: "Order not found" });
-
-    res.json({ success: true, order });
+    res.json({ success: true, order: existing });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Update failed" });
@@ -829,7 +859,7 @@ app.get("/api/health", (req: Request, res: Response) => {
 app.get("/api/config", async (req: Request, res: Response) => {
   try {
     const config = await SiteConfig.findOne({ key: "global" });
-    res.json(config || { header: { logoText: { text: "DENFIT", isVisible: true } } });
+    res.json(config || { branding: { brandName: process.env.BRAND_NAME || "DENFIT", name: process.env.BRAND_NAME || "DENFIT", logoUrl: process.env.BRAND_LOGO_URL || "" }, header: { logoText: { text: process.env.BRAND_NAME || "DENFIT", isVisible: true } } });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Config Error" });
@@ -931,6 +961,21 @@ app.get("/api/discounts", async (req: Request, res: Response) => {
     res.json(codes);
   } catch (error) {
     res.status(500).json({ error: "Failed" });
+  }
+});
+
+app.post("/api/discounts/verify", async (req: Request, res: Response) => {
+  try {
+    const code = String(req.body?.code || "").trim().toUpperCase();
+    const orderAmount = Number(req.body?.orderAmount || 0);
+    if (!code) return res.status(400).json({ valid:false, error:"Discount code is required" });
+    const now = new Date();
+    const discount:any = await DiscountCode.findOne({ name: code, isActive: true, startDate: { $lte: now }, endDate: { $gte: now } });
+    if (!discount) return res.status(404).json({ valid:false, error:"This discount is not currently valid" });
+    if (orderAmount < Number(discount.minOrderAmount || 0)) return res.status(400).json({ valid:false, error:`Minimum order amount is ${discount.minOrderAmount}` });
+    res.json({ valid:true, code:discount.name, percent:discount.percent, discount:discount.percent, minOrderAmount:discount.minOrderAmount, endDate:discount.endDate });
+  } catch (error) {
+    res.status(500).json({ valid:false, error:"Discount verification failed" });
   }
 });
 
@@ -1110,6 +1155,44 @@ app.get("/api/cron/abandoned-cart", async (req: Request, res: Response) => {
   } catch (error: any) {
     console.error("Cron Error:", error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+// =========================================================
+// --- REAL VIRTUAL TRY-ON (FASHN TRY-ON MAX) ---
+// =========================================================
+app.post("/api/ai/try-on", async (req: Request, res: Response) => {
+  try {
+    const personImage = String(req.body?.personImage || "");
+    const garmentImage = String(req.body?.garmentImage || "");
+    const productName = String(req.body?.productName || "selected product");
+    if (!personImage.startsWith("data:image/") || !garmentImage.startsWith("data:image/")) return res.status(400).json({ error:"A valid person photo and product image are required" });
+    const apiKey = process.env.FASHN_API_KEY;
+    if (!apiKey) return res.status(503).json({ error:"Virtual fitting service is not configured", code:"FASHN_API_KEY_REQUIRED" });
+    const run = await globalThis.fetch("https://api.fashn.ai/v1/run", {
+      method:"POST",
+      headers:{ "Content-Type":"application/json", Authorization:`Bearer ${apiKey}` },
+      body:JSON.stringify({ model_name: process.env.FASHN_TRYON_MODEL || "tryon-max", inputs:{ product_image:garmentImage, model_image:personImage, generation_mode:"balanced", resolution:"1k", num_images:1, output_format:"jpeg", return_base64:true, prompt:`Create a realistic virtual fitting of the customer wearing ${productName}. Preserve the person's identity, face, pose and proportions. Integrate the selected product naturally.` } })
+    });
+    const runData:any = await run.json();
+    if (!run.ok || !runData?.id) return res.status(run.status || 502).json({ error:runData?.message || runData?.error || "Virtual fitting request was rejected" });
+    const deadline = Date.now() + 55000;
+    let latest:any;
+    while (Date.now() < deadline) {
+      await new Promise(resolve=>setTimeout(resolve, 1500));
+      const statusResponse = await globalThis.fetch(`https://api.fashn.ai/v1/status/${encodeURIComponent(runData.id)}`, { headers:{ Authorization:`Bearer ${apiKey}` } });
+      latest = await statusResponse.json();
+      if (latest?.status === "completed") {
+        const image = Array.isArray(latest.output) ? latest.output[0] : latest.output;
+        if (image) return res.json({ success:true, image, provider:"fashn", requestId:runData.id });
+        return res.status(502).json({ error:"Virtual fitting completed without an image" });
+      }
+      if (latest?.status === "failed") return res.status(502).json({ error:latest?.error?.message || latest?.error || "Virtual fitting generation failed" });
+    }
+    return res.status(504).json({ error:"Virtual fitting is still processing. Please try again." });
+  } catch (error:any) {
+    console.error("[try-on] failed", error);
+    res.status(500).json({ error:"Virtual fitting could not be completed" });
   }
 });
 
