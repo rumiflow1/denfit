@@ -23,3 +23,9 @@ export const getPackedEmail = (name: string, orderId: string, liveProducts: any[
 export const getShippedEmail = (name: string, orderId: string, liveProducts: any[] = [], currency = 'USD') => { const theme = ATELIER_THEMES.signup; const content = `${intro('Order Update', `Your order is on the way`, `Hi <b>${safe(name)}</b>, order <b>#${safe(orderId)}</b> has been dispatched and is now in transit.`)}${renderLine()}${renderButton('Track Your Order','/profile',theme.primary)}${renderTrendingGrid(liveProducts, currency)}`; return atelierBase(content, `${ATELIER_CONFIG.brandName} | Order in transit`, theme.primary); };
 
 export const getDeliveredEmail = (name: string, orderId: string, liveProducts: any[] = [], currency = 'USD') => { const theme = ATELIER_THEMES.order; const content = `${intro('Delivery Update', `Your order has arrived`, `Hi <b>${safe(name)}</b>, order <b>#${safe(orderId)}</b> has been successfully delivered.`)}${renderLine()}${renderButton('Open Your Account','/profile','#0A0A0A')}${renderTrendingGrid(liveProducts, currency)}`; return atelierBase(content, `${ATELIER_CONFIG.brandName} | Delivery confirmed`, theme.primary); };
+
+
+export const getCancelledEmail = (name: string, orderId: string, liveProducts: any[] = [], currency = 'USD') => {
+  const content = `${intro('Order Update', `Your order has been cancelled`, `Hi <b>${safe(name)}</b>, order <b>#${safe(orderId)}</b> has been cancelled. If you did not request this or need help, our client care team is ready to assist.`, '#A33A3A')}${renderLine()}${renderButton('Contact Client Care','/support','#0A0A0A')}${renderTrendingGrid(liveProducts, currency)}`;
+  return atelierBase(content, `${ATELIER_CONFIG.brandName} | Order cancelled`, '#A33A3A');
+};
