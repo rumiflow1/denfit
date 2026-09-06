@@ -3,6 +3,8 @@ import mongoose, { Schema, Document, Model } from "mongoose";
 import cors from "cors";
 import dotenv from "dotenv";
 import nodemailer from "nodemailer";
+import crypto from "crypto";
+import admin from "firebase-admin";
 import path from "path";
 import fs from "fs";
 import multer from "multer";
@@ -19,6 +21,7 @@ import {
   getDeliveredEmail,
 } from "../src/utils/AtelierEmails.js";
 import { OrderSchema } from "../src/models/MasterModels.js";
+import { sendTransactionalMail } from "../src/utils/mail.js";
 
 dotenv.config();
 
@@ -58,9 +61,13 @@ interface IElement {
 
 interface IReview {
   customerName?: string;
+  email?: string;
+  userId?: string;
   comment?: string;
   rating?: number;
   isManual?: boolean;
+  source?: 'customer' | 'editorial';
+  status?: 'pending' | 'approved' | 'rejected';
   createdAt?: Date;
 }
 
@@ -219,8 +226,12 @@ const ReviewSchema = new Schema<IReview>(
   {
     customerName: { type: String },
     comment: { type: String },
-    rating: { type: Number },
-    isManual: { type: Boolean, default: true },
+    rating: { type: Number, min: 1, max: 5 },
+    email: { type: String },
+    userId: { type: String },
+    isManual: { type: Boolean, default: false },
+    source: { type: String, enum: ['customer', 'editorial'], default: 'customer' },
+    status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
     createdAt: { type: Date, default: Date.now },
   },
   { _id: false }
@@ -499,6 +510,104 @@ app.delete("/api/admin/products/:id", async (req: Request, res: Response) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false });
+  }
+});
+
+// =========================================================
+// --- REVIEW MODERATION: CUSTOMER SUBMISSION + ADMIN QUEUE ---
+// =========================================================
+
+app.get("/api/products/:id/reviews", async (req: Request, res: Response) => {
+  try {
+    const product:any = await Product.findById(req.params.id).lean();
+    if (!product) return res.status(404).json({ error: "Product not found" });
+    const reviews = (product.reviews || []).filter((review:any) => review.status === "approved");
+    res.json({ success: true, reviews });
+  } catch (error) {
+    res.status(500).json({ success: false, error: "Reviews unavailable" });
+  }
+});
+
+app.post("/api/products/:id/reviews", async (req: Request, res: Response) => {
+  try {
+    const { customerName, email, userId, comment, rating } = req.body || {};
+    const cleanName = String(customerName || "").trim();
+    const cleanEmail = String(email || "").trim().toLowerCase();
+    const cleanComment = String(comment || "").trim();
+    const score = Number(rating);
+    if (!cleanName || !cleanEmail || !cleanComment || !Number.isFinite(score) || score < 1 || score > 5) {
+      return res.status(400).json({ success: false, error: "Name, email, rating and review text are required" });
+    }
+    const product:any = await Product.findById(req.params.id);
+    if (!product) return res.status(404).json({ success: false, error: "Product not found" });
+    product.reviews.push({ customerName: cleanName, email: cleanEmail, userId: String(userId || ""), comment: cleanComment, rating: score, isManual: false, source: "customer", status: "pending", createdAt: new Date() });
+    await product.save();
+    res.status(201).json({ success: true, message: "Your review is awaiting approval." });
+  } catch (error) {
+    console.error("[reviews] submission failed", error);
+    res.status(500).json({ success: false, error: "Review could not be submitted" });
+  }
+});
+
+app.get("/api/admin/reviews", async (_req: Request, res: Response) => {
+  try {
+    const products:any[] = await Product.find({}, { title: 1, name: 1, reviews: 1 }).lean();
+    const reviews = products.flatMap((product:any) => (product.reviews || []).map((review:any) => ({
+      ...review,
+      reviewId: String(review._id || ""),
+      productId: String(product._id),
+      productName: product.title || product.name || "Product"
+    }))).sort((a:any,b:any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+    res.json({ success: true, reviews });
+  } catch (error) {
+    res.status(500).json({ success: false, error: "Review queue unavailable" });
+  }
+});
+
+app.post("/api/admin/products/:id/reviews", async (req: Request, res: Response) => {
+  try {
+    const { customerName, comment, rating } = req.body || {};
+    const product:any = await Product.findById(req.params.id);
+    if (!product) return res.status(404).json({ success: false, error: "Product not found" });
+    const cleanName = String(customerName || "").trim();
+    const cleanComment = String(comment || "").trim();
+    const score = Number(rating);
+    if (!cleanName || !cleanComment || !Number.isFinite(score) || score < 1 || score > 5) return res.status(400).json({ success:false, error:"Valid review details are required" });
+    product.reviews.push({ customerName: cleanName, comment: cleanComment, rating: score, isManual: true, source: "editorial", status: "approved", createdAt: new Date() });
+    await product.save();
+    res.status(201).json({ success: true, product });
+  } catch (error) {
+    res.status(500).json({ success:false, error:"Editorial review could not be saved" });
+  }
+});
+
+app.patch("/api/admin/reviews/:productId/:reviewId", async (req: Request, res: Response) => {
+  try {
+    const { status } = req.body || {};
+    if (!["pending","approved","rejected"].includes(String(status))) return res.status(400).json({ success:false, error:"Invalid review status" });
+    const product:any = await Product.findById(req.params.productId);
+    if (!product) return res.status(404).json({ success:false, error:"Product not found" });
+    const review:any = product.reviews.id(req.params.reviewId);
+    if (!review) return res.status(404).json({ success:false, error:"Review not found" });
+    review.status = status;
+    await product.save();
+    res.json({ success:true, review });
+  } catch (error) {
+    res.status(500).json({ success:false, error:"Review status could not be updated" });
+  }
+});
+
+app.delete("/api/admin/reviews/:productId/:reviewId", async (req: Request, res: Response) => {
+  try {
+    const product:any = await Product.findById(req.params.productId);
+    if (!product) return res.status(404).json({ success:false, error:"Product not found" });
+    const review:any = product.reviews.id(req.params.reviewId);
+    if (!review) return res.status(404).json({ success:false, error:"Review not found" });
+    review.deleteOne();
+    await product.save();
+    res.json({ success:true });
+  } catch (error) {
+    res.status(500).json({ success:false, error:"Review could not be deleted" });
   }
 });
 
@@ -856,39 +965,87 @@ app.get("/api/admin/newsletter", async (req: Request, res: Response) => {
 // --- 15. IDENTITY RECOVERY & DISPATCH ---
 // =========================================================
 
-const otpStore = new Map<string, string>();
+const PasswordReset = (mongoose.models.PasswordReset as Model<any>) || mongoose.model("PasswordReset", new Schema({
+  email: { type: String, required: true, lowercase: true, index: true },
+  codeHash: { type: String, required: true },
+  expiresAt: { type: Date, required: true, index: { expires: 0 } },
+  verifiedAt: { type: Date },
+  createdAt: { type: Date, default: Date.now }
+}, { collection: "password_resets" }));
+
+const normalizeEmail = (value:any) => String(value || "").trim().toLowerCase();
+const hashResetCode = (email:string, code:string) => crypto.createHash("sha256").update(`${email}:${code}`).digest("hex");
+
+function getFirebaseAdmin() {
+  if (admin.apps.length) return admin.app();
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  if (raw) {
+    const serviceAccount = JSON.parse(raw);
+    return admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+  }
+  const projectId = process.env.FIREBASE_PROJECT_ID;
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+  const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n");
+  if (projectId && clientEmail && privateKey) {
+    return admin.initializeApp({ credential: admin.credential.cert({ projectId, clientEmail, privateKey }) });
+  }
+  throw new Error("Firebase Admin credentials are not configured");
+}
 
 app.post("/api/auth/forgot-password", async (req: Request, res: Response) => {
   try {
-    const { email } = req.body;
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
-    otpStore.set(email, code);
-
+    const email = normalizeEmail(req.body?.email);
+    if (!email) return res.status(400).json({ success:false, error:"Email is required" });
+    const code = crypto.randomInt(100000, 1000000).toString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    await PasswordReset.deleteMany({ email });
+    await PasswordReset.create({ email, codeHash: hashResetCode(email, code), expiresAt });
     const emailHtml = getOTPEmail(code);
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
-    });
-    await transporter.sendMail({
-      from: `"DENFIT" <${process.env.EMAIL_USER}>`,
-      to: email,
-      subject: "Security Access Key",
-      html: emailHtml,
-    });
-    res.json({ success: true });
+    await sendTransactionalMail(email, `${process.env.BRAND_NAME || "DENFIT"} | Password reset code`, emailHtml, `password-reset:${email}:${code}`);
+    res.json({ success: true, expiresInMinutes: 10 });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Mail Gateway Error" });
+    console.error("[password-reset] request failed", err);
+    res.status(500).json({ success:false, error:"Reset code could not be sent" });
   }
 });
 
-app.post("/api/auth/verify-code", (req: Request, res: Response) => {
-  const { email, code } = req.body;
-  if (otpStore.get(email) === code) {
-    otpStore.delete(email);
-    res.json({ success: true });
-  } else {
-    res.status(400).json({ error: "Invalid Code" });
+app.post("/api/auth/verify-code", async (req: Request, res: Response) => {
+  try {
+    const email = normalizeEmail(req.body?.email);
+    const code = String(req.body?.code || "").trim();
+    if (!email || !/^[0-9]{6}$/.test(code)) return res.status(400).json({ success:false, error:"Invalid verification code" });
+    const record:any = await PasswordReset.findOne({ email, expiresAt: { $gt: new Date() } }).sort({ createdAt: -1 });
+    if (!record || record.codeHash !== hashResetCode(email, code)) return res.status(400).json({ success:false, error:"Invalid or expired verification code" });
+    record.verifiedAt = new Date();
+    await record.save();
+    res.json({ success:true });
+  } catch (error) {
+    console.error("[password-reset] verification failed", error);
+    res.status(500).json({ success:false, error:"Verification could not be completed" });
+  }
+});
+
+app.post("/api/auth/reset-password", async (req: Request, res: Response) => {
+  try {
+    const email = normalizeEmail(req.body?.email);
+    const code = String(req.body?.code || "").trim();
+    const newPassword = String(req.body?.newPassword || "");
+    if (!email || !/^[0-9]{6}$/.test(code) || newPassword.length < 8) return res.status(400).json({ success:false, error:"Use a valid code and a password of at least 8 characters" });
+    const record:any = await PasswordReset.findOne({ email, expiresAt: { $gt: new Date() } }).sort({ createdAt: -1 });
+    if (!record || record.codeHash !== hashResetCode(email, code) || !record.verifiedAt) return res.status(400).json({ success:false, error:"Code verification is required before resetting the password" });
+    try {
+      getFirebaseAdmin();
+    } catch (firebaseError:any) {
+      return res.status(503).json({ success:false, error:"Firebase Admin is not configured in production", code:"FIREBASE_ADMIN_CONFIG_REQUIRED", detail: firebaseError?.message });
+    }
+    const firebaseUser = await admin.auth().getUserByEmail(email);
+    await admin.auth().updateUser(firebaseUser.uid, { password: newPassword });
+    await PasswordReset.deleteMany({ email });
+    res.json({ success:true, message:"Password updated successfully" });
+  } catch (error:any) {
+    console.error("[password-reset] update failed", error);
+    if (error?.code === "auth/user-not-found") return res.status(404).json({ success:false, error:"No Firebase account was found for this email" });
+    res.status(500).json({ success:false, error:"Password could not be updated" });
   }
 });
 
