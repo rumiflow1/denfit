@@ -1,9 +1,12 @@
 import mongoose, { Schema, Model } from "mongoose";
 import { BRAND } from "../src/config/brand.js";
+import { connectDB, collectionModel } from "./_shared.js";
 
 const Activity = (mongoose.models.Activity as Model<any>) || mongoose.model("Activity", new Schema({ email: String, action: String, details: Schema.Types.Mixed, timestamp: { type: Date, default: Date.now } }, { timestamps: true }));
 const PasswordReset = (mongoose.models.PasswordReset as Model<any>) || mongoose.model("PasswordReset", new Schema({ email: { type: String, required: true, lowercase: true, index: true }, codeHash: { type: String, required: true }, verified: { type: Boolean, default: false }, expiresAt: { type: Date, required: true, index: true } }, { timestamps: true }));
 const getModel = <T = any>(name: string) => mongoose.models[name] as Model<T> | undefined;
+const ProductionProduct = collectionModel("RepairProductionProduct", "products") as any;
+const ProductionDiscountCode = collectionModel("RepairProductionDiscountCode", "discountcodes") as any;
 const reply = (res: any, status: number, body: any) => { res.status(status).json(body); return true; };
 const hash = async (value: string) => Buffer.from(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))).toString("hex");
 
@@ -111,11 +114,11 @@ export async function handleRepair(req: any, res: any): Promise<boolean> {
 
   if (req.method === "POST" && url === "/api/discounts/verify") {
     try {
+      await connectDB();
       const codeValue = String(req.body?.code || req.body?.name || req.query?.code || "").trim().toUpperCase();
       const orderAmount = Number(req.body?.orderAmount ?? req.body?.subtotal ?? req.body?.total ?? 0);
       if (!codeValue) return reply(res, 400, { success: false, valid: false, error: "Discount code is required" });
-      const DiscountCode = getModel("DiscountCode");
-      if (!DiscountCode) return reply(res, 503, { success: false, valid: false, error: "Discount service unavailable" });
+      const DiscountCode = getModel("DiscountCode") || ProductionDiscountCode;
       const code: any = await DiscountCode.findOne({ name: codeValue }).lean();
       if (!code) return reply(res, 200, { success: false, valid: false, error: "Invalid discount code" });
       const now = Date.now(); const start = new Date(code.startDate).getTime(); const end = new Date(code.endDate).getTime();
@@ -170,18 +173,19 @@ export async function handleRepair(req: any, res: any): Promise<boolean> {
   }
 
   if (req.method === "POST" && url === "/api/auth/forgot-password") {
-    try { const email = String(req.body?.email || "").trim().toLowerCase(); if (!email) return reply(res, 400, { success: false, error: "Email is required" }); const code = String(Math.floor(100000 + Math.random() * 900000)); await PasswordReset.deleteMany({ email }); await PasswordReset.create({ email, codeHash: await hash(code), verified: false, expiresAt: new Date(Date.now() + 600000) }); const { getOTPEmail } = await import("../src/utils/AtelierEmails.js"); await sendMail(email, `${BRAND.name} | Secure Access Key`, getOTPEmail(code)); return reply(res, 200, { success: true }); }
+    try { await connectDB(); const email = String(req.body?.email || "").trim().toLowerCase(); if (!email) return reply(res, 400, { success: false, error: "Email is required" }); const code = String(Math.floor(100000 + Math.random() * 900000)); await PasswordReset.deleteMany({ email }); await PasswordReset.create({ email, codeHash: await hash(code), verified: false, expiresAt: new Date(Date.now() + 600000) }); const { getOTPEmail } = await import("../src/utils/AtelierEmails.js"); await sendMail(email, `${BRAND.name} | Secure Access Key`, getOTPEmail(code)); return reply(res, 200, { success: true }); }
     catch (error) { console.error("[forgot-password]", error); return reply(res, 500, { success: false, error: "Unable to send recovery code" }); }
   }
 
   if (req.method === "POST" && url === "/api/auth/verify-code") {
-    try { const email = String(req.body?.email || "").trim().toLowerCase(); const code = String(req.body?.code || "").trim(); const record = await PasswordReset.findOne({ email }).sort({ createdAt: -1 }); if (!record || record.expiresAt.getTime() < Date.now() || await hash(code) !== record.codeHash) return reply(res, 400, { success: false, error: "Invalid or expired code" }); record.verified = true; await record.save(); return reply(res, 200, { success: true, verified: true }); }
+    try { await connectDB(); const email = String(req.body?.email || "").trim().toLowerCase(); const code = String(req.body?.code || "").trim(); const record = await PasswordReset.findOne({ email }).sort({ createdAt: -1 }); if (!record || record.expiresAt.getTime() < Date.now() || await hash(code) !== record.codeHash) return reply(res, 400, { success: false, error: "Invalid or expired code" }); record.verified = true; await record.save(); return reply(res, 200, { success: true, verified: true }); }
     catch (error) { console.error("[verify-code]", error); return reply(res, 400, { success: false, error: "Invalid or expired code" }); }
   }
 
   if (req.method === "POST" && url === "/api/auth/reset-password") {
     const email = String(req.body?.email || "").trim().toLowerCase(); const code = String(req.body?.code || "").trim(); const newPassword = String(req.body?.newPassword || "");
     try {
+      await connectDB();
       if (newPassword.length < 6) return reply(res, 400, { success: false, error: "Password must contain at least 6 characters" }); const record = await PasswordReset.findOne({ email, verified: true }).sort({ createdAt: -1 }); if (!record || record.expiresAt.getTime() < Date.now() || await hash(code) !== record.codeHash) return reply(res, 400, { success: false, error: "Recovery session expired. Request a new code." }); const admin = await getFirebaseAdmin(); const account = await admin.auth().getUserByEmail(email); await admin.auth().updateUser(account.uid, { password: newPassword }); await PasswordReset.deleteMany({ email }); await Activity.create({ email, action: "password_reset", details: "Password updated" }); return reply(res, 200, { success: true });
     } catch (error: any) { console.error("[reset-password]", error); const message = String(error?.message || ""); if (message.includes("Password recovery service is not configured")) return reply(res, 503, { success: false, error: "Password recovery service is not configured" }); if (message.includes("auth/user-not-found")) return reply(res, 404, { success: false, error: "No account exists for this email." }); return reply(res, 500, { success: false, error: "Password could not be updated. Please try again." }); }
   }
