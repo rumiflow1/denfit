@@ -108,8 +108,17 @@ export async function handleRepair(req: any, res: any): Promise<boolean> {
   }
 
   if (req.method === "GET" && /^\/api\/products\/[^/]+$/.test(url)) {
-    try { const id = url.split("/").pop() || ""; if (!mongoose.isValidObjectId(id)) return reply(res, 400, { success: false, error: "Invalid product id" }); const Product = getModel("Product"); if (!Product) return reply(res, 503, { success: false, error: "Product service unavailable" }); const product = await Product.findById(id).lean(); return product ? reply(res, 200, product) : reply(res, 404, { success: false, error: "Product not found" }); }
-    catch (error) { console.error("[product-detail]", error); return reply(res, 500, { success: false, error: "Unable to load product" }); }
+    try {
+      await connectDB();
+      const id = url.split("/").pop() || "";
+      if (!mongoose.isValidObjectId(id)) return reply(res, 400, { success: false, error: "Invalid product id" });
+      const Product = getModel("Product") || ProductionProduct;
+      const product = await Product.findById(id).lean();
+      return product ? reply(res, 200, product) : reply(res, 404, { success: false, error: "Product not found" });
+    } catch (error) {
+      console.error("[product-detail]", error);
+      return reply(res, 503, { success: false, error: "Product service unavailable" });
+    }
   }
 
   if (req.method === "POST" && url === "/api/discounts/verify") {
