@@ -7,6 +7,7 @@ import { handleOrderRoutes } from "./orderRoutes.js";
 import { handleCustomerRoutes } from "./customerRoutes.js";
 import { handleMarketingRoutes } from "./marketingRoutes.js";
 import { handleAI } from "./ai.js";
+import { handleTryOn } from "./tryOn.js";
 import { handleAuthSync } from "./authSync.js";
 import { handleTransactionalEmailRoutes } from "./transactionalEmails.js";
 import { logAuthActivity } from "./activity.js";
@@ -18,6 +19,7 @@ export default async function handler(req: Request, res: Response) {
   }
   if (await handleAuthSync(req, res)) return;
   if (await handleAI(req, res)) return;
+  if (await handleTryOn(req, res)) return;
   if (await handleOrderRoutes(req, res)) return;
   if (await handleCustomerRoutes(req, res)) return;
   if (await handleMarketingRoutes(req, res)) return;
