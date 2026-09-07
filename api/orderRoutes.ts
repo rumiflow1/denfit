@@ -129,16 +129,12 @@ export async function handleOrderRoutes(req:any,res:any):Promise<boolean>{
     if(changed&&order.email){
       try{
         const products=await getLiveProducts();
-        const {getPackedEmail,getShippedEmail,getDeliveredEmail,getCancelledEmail,getStatusEmail}=await import("../src/utils/AtelierEmails.js");
+        const {getStatusEmail}=await import("../src/utils/AtelierEmails.js");
         const currency=orderCurrency(order);
-        let html="";
-        let subject="";
-        let key=`order:${order._id}:${status.toLowerCase().replace(/\s+/g,"-")}`;
-        if(status==="Packed"){html=getPackedEmail(customerName(order),String(order._id),products,currency);subject=`${BRAND.name} | Order Packed`;}
-        else if(status==="On the Way"||status==="Shipped"){html=getShippedEmail(customerName(order),String(order._id),products,currency);subject=`${BRAND.name} | Order ${status}`;}
-        else if(status==="Delivered"){html=getDeliveredEmail(customerName(order),String(order._id),products,currency);subject=`${BRAND.name} | Order Delivered`;}
-        else if(status==="Cancelled"){html=getCancelledEmail(customerName(order),String(order._id),products,currency);subject=`${BRAND.name} | Order Cancelled`;}
-        else {html=getStatusEmail(customerName(order),String(order._id),status,order.trackingNumber||"",Number(order.totalAmount||0),currency,products);subject=`${BRAND.name} | Order ${status}`;}
+        const key=`order:${order._id}:${status.toLowerCase().replace(/\s+/g,"-")}`;
+        const latestEvent=Array.isArray(order.statusHistory)&&order.statusHistory.length?order.statusHistory[order.statusHistory.length-1]?.at:order.updatedAt;
+        const html=getStatusEmail(customerName(order),String(order._id),status,order.trackingNumber||"",Number(order.totalAmount||0),currency,products,latestEvent||new Date());
+        const subject=`${BRAND.name} | Order ${status}`;
         await sendTransactionalMail(order.email,subject,html,key);
       }catch(emailError){console.warn("[orders] status email failed after status update",emailError);}
     }
