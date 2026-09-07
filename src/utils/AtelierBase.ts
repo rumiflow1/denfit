@@ -17,14 +17,14 @@ export const atelierBase = (content: string, previewText: string, themeColor = '
 </a></td></tr>
 <tr><td style="height:1px;background:#CBD5E1;font-size:0;line-height:0;">&nbsp;</td></tr>
 <tr><td style="padding:46px 42px 44px;background:#fff;">${content}</td></tr>
-<tr><td style="padding:15px 20px;background:#F8FAFC;border-top:1px solid #E2E8F0;border-bottom:1px solid #E2E8F0;text-align:center;"><span style="font-size:9px;color:#6D665D;letter-spacing:.12em;text-transform:uppercase;">Curated quality</span><span style="color:#64748B;padding:0 12px;">•</span><span style="font-size:9px;color:#6D665D;letter-spacing:.12em;text-transform:uppercase;">Secure service</span><span style="color:#C7A45C;padding:0 12px;">•</span><span style="font-size:9px;color:#6D665D;letter-spacing:.12em;text-transform:uppercase;">Client care</span></td></tr>
+<tr><td style="padding:15px 20px;background:#F8FAFC;border-top:1px solid #E2E8F0;border-bottom:1px solid #E2E8F0;text-align:center;"><span style="font-size:9px;color:#6D665D;letter-spacing:.12em;text-transform:uppercase;">Curated quality</span><span style="color:#64748B;padding:0 12px;">•</span><span style="font-size:9px;color:#6D665D;letter-spacing:.12em;text-transform:uppercase;">Secure service</span><span style="color:#64748B;padding:0 12px;">•</span><span style="font-size:9px;color:#6D665D;letter-spacing:.12em;text-transform:uppercase;">Client care</span></td></tr>
 <tr><td style="padding:30px 24px;background:#0B1220;text-align:center;">
 <img src="${ATELIER_CONFIG.logoUrl}" alt="${escapeHtml(ATELIER_CONFIG.brandName)}" width="120" style="display:block;width:120px;height:auto;max-height:72px;object-fit:contain;margin:0 auto 13px;" />
 <div style="font-family:Georgia,'Times New Roman',serif;font-size:11px;color:#F8FAFC;letter-spacing:.18em;text-transform:uppercase;">Private Client Services</div>
 <div style="margin-top:16px;font-size:10px;line-height:1.8;">
 <a href="${ATELIER_CONFIG.frontendUrl}/support?tab=privacy" style="color:#E2E8F0;text-decoration:none;">Privacy</a><span style="color:#64748B;padding:0 7px;">•</span>
-<a href="${ATELIER_CONFIG.frontendUrl}/support?tab=returns" style="color:#E2E8F0;text-decoration:none;">Returns</a><span style="color:#555;padding:0 7px;">•</span>
-<a href="${ATELIER_CONFIG.frontendUrl}/support?tab=faq" style="color:#E2E8F0;text-decoration:none;">FAQs</a><span style="color:#555;padding:0 7px;">•</span>
+<a href="${ATELIER_CONFIG.frontendUrl}/support?tab=returns" style="color:#E2E8F0;text-decoration:none;">Returns</a><span style="color:#64748B;padding:0 7px;">•</span>
+<a href="${ATELIER_CONFIG.frontendUrl}/support?tab=faq" style="color:#E2E8F0;text-decoration:none;">FAQs</a><span style="color:#64748B;padding:0 7px;">•</span>
 <a href="mailto:${ATELIER_CONFIG.supportEmail}" style="color:#E2E8F0;text-decoration:none;">Support</a></div>
 <div style="margin-top:17px;font-size:9px;color:#94A3B8;">&copy; 2026 ${escapeHtml(ATELIER_CONFIG.brandName)}. All rights reserved.</div>
 </td></tr></table></td></tr></table></body></html>`;
