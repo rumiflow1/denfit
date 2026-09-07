@@ -1,5 +1,5 @@
 import mongoose from "mongoose";
-import { connectDB } from "./_shared.js";
+import { connectDB, SiteConfig } from "./_shared.js";
 import { BRAND } from "../src/config/brand.js";
 import { sendTransactionalMail } from "../src/utils/mail.js";
 
@@ -7,6 +7,18 @@ const getModel=(name:string)=>mongoose.models[name] as any;
 const shortTrackingNumber=()=>`DNF-${Math.floor(100000+Math.random()*900000)}`;
 const customerName=(order:any)=>String(order?.fullName||order?.shippingDetails?.firstName||"Customer").trim()||"Customer";
 const orderCurrency=(order:any)=>String(order?.currency||"USD").toUpperCase();
+const validCurrency=(value:any)=>{
+  const code=String(value||"").trim().toUpperCase();
+  return /^[A-Z]{3}$/.test(code) ? code : "";
+};
+const configuredCurrency=async(requested:any)=>{
+  const fallback=validCurrency(requested)||"USD";
+  try{
+    const config:any=await SiteConfig.findOne({key:"global"}).lean();
+    const code=validCurrency(config?.currency||config?.currencyCode||config?.commerce?.currency||config?.localization?.currency);
+    return code||fallback;
+  }catch{return fallback;}
+};
 
 const canonicalStatus=(value:any)=>{
   const raw=String(value||"").trim().toLowerCase().replace(/[_-]/g," ");
@@ -71,7 +83,7 @@ export async function handleOrderRoutes(req:any,res:any):Promise<boolean>{
 
       if(!items.length||!fullName||!email)return res.status(400).json({success:false,error:"Missing customer name, email or order items"});
 
-      const currency=String(body.currency||"USD").toUpperCase();
+      const currency=await configuredCurrency(body.currency);
       const now=new Date();
       const order=await Order.create({
         userId:body.userId||"GUEST",
