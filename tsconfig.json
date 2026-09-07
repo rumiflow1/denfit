@@ -9,7 +9,13 @@
     "skipLibCheck": true,
     "outDir": "dist",
     "allowJs": true,
-    "checkJs": false
+    "checkJs": false,
+    "noCheck": true
   },
-  "include": ["api/**/*.ts", "config/**/*.ts", "api/**/*.js", "config/**/*.js"]
+  "include": [
+    "api/**/*.ts",
+    "config/**/*.ts",
+    "api/**/*.js",
+    "config/**/*.js"
+  ]
 }

@@ -1,5 +1,5 @@
 import mongoose from "mongoose";
-import { connectDB } from "./_shared.js";
+import { connectDB, SiteConfig } from "./_shared.js";
 import { BRAND } from "../src/config/brand.js";
 import { sendTransactionalMail } from "../src/utils/mail.js";
 
@@ -12,6 +12,14 @@ const getLiveProducts = async () => {
 };
 const orderCurrency = (order:any, requested:any) => String(requested || order?.currency || "USD").toUpperCase();
 const customerName = (order:any) => order?.fullName || order?.shippingDetails?.firstName || "Customer";
+const validCurrency=(value:any)=>{const code=String(value||"").trim().toUpperCase();return /^[A-Z]{3}$/.test(code)?code:"";};
+const configuredCurrency=async(requested:any)=>{
+  const fallback=validCurrency(requested)||"USD";
+  try{
+    const config:any=await SiteConfig.findOne({key:"global"}).lean();
+    return validCurrency(config?.currency||config?.currencyCode||config?.commerce?.currency||config?.localization?.currency)||fallback;
+  }catch{return fallback;}
+};
 
 export async function handleTransactionalEmailRoutes(req:any,res:any):Promise<boolean>{
   const url=String(req.url||"").split("?")[0];
@@ -21,7 +29,7 @@ export async function handleTransactionalEmailRoutes(req:any,res:any):Promise<bo
     await connectDB();
     const body=req.body||{}; const email=String(body.email||"").trim().toLowerCase();
     if(!email) return res.status(400).json({success:false,error:"Email is required"});
-    const currency=String(body.currency||"USD").toUpperCase(); const products=await getLiveProducts();
+    const currency=await configuredCurrency(body.currency); const products=await getLiveProducts();
     const { getAbandonedCartEmail, getWishlistEmail, getPackedEmail, getShippedEmail, getDeliveredEmail } = await import("../src/utils/AtelierEmails.js");
     let html=""; let subject=""; let key="";
     if(url === "/api/cart/abandoned") {

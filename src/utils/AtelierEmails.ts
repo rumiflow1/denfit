@@ -29,3 +29,40 @@ export const getCancelledEmail = (name: string, orderId: string, liveProducts: a
   const content = `${intro('Order Update', `Your order has been cancelled`, `Hi <b>${safe(name)}</b>, order <b>#${safe(orderId)}</b> has been cancelled. If you did not request this or need help, our client care team is ready to assist.`, '#A33A3A')}${renderLine()}${renderButton('Contact Client Care','/support','#0A0A0A')}${renderTrendingGrid(liveProducts, currency)}`;
   return atelierBase(content, `${ATELIER_CONFIG.brandName} | Order cancelled`, '#A33A3A');
 };
+
+
+export const getStatusEmail = (
+  name: string,
+  orderId: string,
+  status: string,
+  trackingNumber = '',
+  total = 0,
+  currency = 'USD',
+  liveProducts: any[] = [],
+  updatedAt: Date | string = new Date()
+) => {
+  const normalized = String(status || 'Updated').trim();
+  const statusKey = normalized.toLowerCase();
+  const accent = statusKey === 'cancelled' ? '#B42318'
+    : statusKey === 'delivered' || statusKey === 'confirmed' ? '#1F7A4D'
+    : '#152238';
+  const date = new Intl.DateTimeFormat('en-US', {
+    day: 'numeric', month: 'long', year: 'numeric',
+    hour: 'numeric', minute: '2-digit', hour12: true
+  }).format(new Date(updatedAt));
+  const content = `${intro(
+    'Order Update',
+    `Order ${safe(normalized)}`,
+    `Hello <b>${safe(name || 'Customer')}</b>, your order status has been updated to <b>${safe(normalized)}</b>.`,
+    accent
+  )}${renderLine()}<div style="padding:20px;background:#F7F8FA;border:1px solid #E2E8F0;">
+    <div style="font-size:10px;color:#64748B;text-transform:uppercase;letter-spacing:.18em;">Order Number</div>
+    <div style="font-size:17px;font-weight:700;margin-top:6px;">#${safe(orderId)}</div>
+    ${trackingNumber ? `<div style="font-size:10px;color:#64748B;text-transform:uppercase;letter-spacing:.18em;margin-top:18px;">Tracking Number</div><div style="font-size:15px;font-weight:700;margin-top:5px;">${safe(trackingNumber)}</div>` : ''}
+    <div style="font-size:10px;color:#64748B;text-transform:uppercase;letter-spacing:.18em;margin-top:18px;">Updated</div>
+    <div style="font-size:14px;margin-top:5px;">${safe(date)}</div>
+    <div style="font-size:10px;color:#64748B;text-transform:uppercase;letter-spacing:.18em;margin-top:18px;">Order Total</div>
+    <div style="font-size:16px;font-weight:700;margin-top:5px;">${safe(formatCurrency(Number(total || 0), currency))}</div>
+  </div>${renderLine()}${renderButton(normalized === 'Shipped' || normalized === 'On the Way' ? 'Track Your Order' : 'View Order','/profile','#0B1220')}${renderTrendingGrid(liveProducts, currency)}`;
+  return atelierBase(content, `${ATELIER_CONFIG.brandName} | Order ${normalized}`, '#0B1220');
+};

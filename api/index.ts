@@ -62,6 +62,7 @@ interface IElement {
 interface IBranding { brandName?: string; name?: string; logoUrl?: string; supportEmail?: string; }
 
 interface IReview {
+  reviewId?: string;
   customerName?: string;
   email?: string;
   userId?: string;
@@ -228,6 +229,7 @@ const ElementSchema = new Schema<IElement>(
 
 const ReviewSchema = new Schema<IReview>(
   {
+    reviewId: { type: String, index: true },
     customerName: { type: String },
     comment: { type: String },
     rating: { type: Number, min: 1, max: 5 },
@@ -543,9 +545,16 @@ app.get("/api/products/:id/reviews", async (req: Request, res: Response) => {
   try {
     const product:any = await Product.findById(req.params.id).lean();
     if (!product) return res.status(404).json({ error: "Product not found" });
-    const reviews = (product.reviews || []).filter((review:any) => review.status === "approved");
+    const email = String(req.query?.email || "").trim().toLowerCase();
+    const userId = String(req.query?.userId || "").trim();
+    const reviews = (product.reviews || []).filter((review:any) => {
+      if (review.status === "approved") return true;
+      if (review.status !== "pending") return false;
+      return Boolean((userId && String(review.userId || "") === userId) || (email && String(review.email || "").toLowerCase() === email));
+    });
     res.json({ success: true, reviews });
   } catch (error) {
+    console.error("[reviews] list failed", error);
     res.status(500).json({ success: false, error: "Reviews unavailable" });
   }
 });
@@ -562,7 +571,18 @@ app.post("/api/products/:id/reviews", async (req: Request, res: Response) => {
     }
     const product:any = await Product.findById(req.params.id);
     if (!product) return res.status(404).json({ success: false, error: "Product not found" });
-    const review = { _id: new mongoose.Types.ObjectId(), customerName: cleanName, email: cleanEmail, userId: String(userId || ""), comment: cleanComment, rating: score, isManual: false, source: "customer", status: "pending", createdAt: new Date() };
+    const review = {
+      reviewId: crypto.randomUUID(),
+      customerName: cleanName,
+      email: cleanEmail,
+      userId: String(userId || ""),
+      comment: cleanComment,
+      rating: score,
+      isManual: false,
+      source: "customer",
+      status: "pending",
+      createdAt: new Date()
+    };
     product.reviews.push(review);
     await product.save();
     res.status(201).json({ success: true, review, message: "Review added" });
@@ -577,32 +597,46 @@ app.get("/api/admin/reviews", async (_req: Request, res: Response) => {
     const products:any[] = await Product.find({}, { title: 1, name: 1, reviews: 1 }).lean();
     const reviews = products.flatMap((product:any) => (product.reviews || []).map((review:any) => ({
       ...review,
-      reviewId: String(review._id || ""),
+      reviewId: String(review.reviewId || review._id || ""),
       productId: String(product._id),
       productName: product.title || product.name || "Product"
     }))).sort((a:any,b:any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
     res.json({ success: true, reviews });
   } catch (error) {
+    console.error("[reviews] admin list failed", error);
     res.status(500).json({ success: false, error: "Review queue unavailable" });
   }
 });
 
 app.post("/api/admin/products/:id/reviews", async (req: Request, res: Response) => {
   try {
-    const { customerName, comment, rating } = req.body || {};
+    const { customerName, email, comment, rating, status } = req.body || {};
     const product:any = await Product.findById(req.params.id);
     if (!product) return res.status(404).json({ success: false, error: "Product not found" });
     const cleanName = String(customerName || "").trim();
     const cleanComment = String(comment || "").trim();
     const score = Number(rating);
     if (!cleanName || !cleanComment || !Number.isFinite(score) || score < 1 || score > 5) return res.status(400).json({ success:false, error:"Valid review details are required" });
-    product.reviews.push({ customerName: cleanName, comment: cleanComment, rating: score, isManual: true, source: "editorial", status: "approved", createdAt: new Date() });
+    product.reviews.push({
+      reviewId: crypto.randomUUID(),
+      customerName: cleanName,
+      email: String(email || "").trim().toLowerCase(),
+      comment: cleanComment,
+      rating: score,
+      isManual: true,
+      source: "editorial",
+      status: ["pending","approved","rejected","hidden"].includes(String(status)) ? String(status) : "approved",
+      createdAt: new Date()
+    });
     await product.save();
     res.status(201).json({ success: true, product });
   } catch (error) {
+    console.error("[reviews] editorial save failed", error);
     res.status(500).json({ success:false, error:"Editorial review could not be saved" });
   }
 });
+
+const findReview = (product:any, reviewId:string) => (product.reviews || []).find((review:any) => String(review.reviewId || review._id || "") === String(reviewId));
 
 app.patch("/api/admin/reviews/:productId/:reviewId", async (req: Request, res: Response) => {
   try {
@@ -610,12 +644,13 @@ app.patch("/api/admin/reviews/:productId/:reviewId", async (req: Request, res: R
     if (!["pending","approved","rejected","hidden"].includes(String(status))) return res.status(400).json({ success:false, error:"Invalid review status" });
     const product:any = await Product.findById(req.params.productId);
     if (!product) return res.status(404).json({ success:false, error:"Product not found" });
-    const review:any = product.reviews.id(req.params.reviewId);
+    const review:any = findReview(product, req.params.reviewId);
     if (!review) return res.status(404).json({ success:false, error:"Review not found" });
-    review.status = status;
+    review.status = String(status);
     await product.save();
     res.json({ success:true, review });
   } catch (error) {
+    console.error("[reviews] status update failed", error);
     res.status(500).json({ success:false, error:"Review status could not be updated" });
   }
 });
@@ -624,28 +659,37 @@ app.put("/api/admin/reviews/:productId/:reviewId", async (req: Request, res: Res
   try {
     const product:any = await Product.findById(req.params.productId);
     if (!product) return res.status(404).json({ success:false, error:"Product not found" });
-    const review:any = product.reviews.id(req.params.reviewId);
+    const review:any = findReview(product, req.params.reviewId);
     if (!review) return res.status(404).json({ success:false, error:"Review not found" });
-    const { customerName, comment, rating, status } = req.body || {};
+    const { customerName, email, comment, rating, status } = req.body || {};
     if (customerName !== undefined) review.customerName = String(customerName).trim();
+    if (email !== undefined) review.email = String(email).trim().toLowerCase();
     if (comment !== undefined) review.comment = String(comment).trim();
-    if (rating !== undefined) { const score=Number(rating); if (!Number.isFinite(score)||score<1||score>5) return res.status(400).json({success:false,error:"Rating must be 1 to 5"}); review.rating=score; }
-    if (status !== undefined && ["pending","approved","rejected","hidden"].includes(String(status))) review.status = status;
+    if (rating !== undefined) {
+      const score=Number(rating);
+      if (!Number.isFinite(score)||score<1||score>5) return res.status(400).json({success:false,error:"Rating must be 1 to 5"});
+      review.rating=score;
+    }
+    if (status !== undefined && ["pending","approved","rejected","hidden"].includes(String(status))) review.status = String(status);
     await product.save();
     res.json({ success:true, review });
-  } catch (error) { res.status(500).json({ success:false, error:"Review could not be updated" }); }
+  } catch (error) {
+    console.error("[reviews] edit failed", error);
+    res.status(500).json({ success:false, error:"Review could not be updated" });
+  }
 });
 
 app.delete("/api/admin/reviews/:productId/:reviewId", async (req: Request, res: Response) => {
   try {
     const product:any = await Product.findById(req.params.productId);
     if (!product) return res.status(404).json({ success:false, error:"Product not found" });
-    const review:any = product.reviews.id(req.params.reviewId);
-    if (!review) return res.status(404).json({ success:false, error:"Review not found" });
-    review.deleteOne();
+    const index=(product.reviews || []).findIndex((review:any)=>String(review.reviewId || review._id || "")===String(req.params.reviewId));
+    if (index < 0) return res.status(404).json({ success:false, error:"Review not found" });
+    product.reviews.splice(index, 1);
     await product.save();
     res.json({ success:true });
   } catch (error) {
+    console.error("[reviews] delete failed", error);
     res.status(500).json({ success:false, error:"Review could not be deleted" });
   }
 });

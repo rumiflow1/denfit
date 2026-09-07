@@ -1,11 +1,11 @@
 import { BRAND } from "../config/brand.js";
 
 export const ATELIER_THEMES = {
-  signup: { primary: "#0A0A0A", accent: "#D4AF37" },
-  login: { primary: "#0A0A0A", accent: "#D4AF37" },
-  order: { primary: "#0A0A0A", accent: "#D4AF37" },
-  cart: { primary: "#0A0A0A", accent: "#D4AF37" },
-  reset: { primary: "#0A0A0A", accent: "#D4AF37" },
+  signup: { primary: "#0B1220", accent: "#152238" },
+  login: { primary: "#0B1220", accent: "#152238" },
+  order: { primary: "#0B1220", accent: "#152238" },
+  cart: { primary: "#0B1220", accent: "#152238" },
+  reset: { primary: "#0B1220", accent: "#152238" },
 };
 
 export const ATELIER_CONFIG = {
