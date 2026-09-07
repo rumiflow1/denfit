@@ -1,6 +1,7 @@
 import mongoose, { Schema, Model } from "mongoose";
 import { BRAND } from "../src/config/brand.js";
 import { connectDB, collectionModel } from "./_shared.js";
+import { sendTransactionalMail } from "../src/utils/mail.js";
 
 const Activity = (mongoose.models.Activity as Model<any>) || mongoose.model("Activity", new Schema({ email: String, action: String, details: Schema.Types.Mixed, timestamp: { type: Date, default: Date.now } }, { timestamps: true }));
 const PasswordReset = (mongoose.models.PasswordReset as Model<any>) || mongoose.model("PasswordReset", new Schema({ email: { type: String, required: true, lowercase: true, index: true }, codeHash: { type: String, required: true }, verified: { type: Boolean, default: false }, expiresAt: { type: Date, required: true, index: true } }, { timestamps: true }));
@@ -10,11 +11,8 @@ const ProductionDiscountCode = collectionModel("RepairProductionDiscountCode", "
 const reply = (res: any, status: number, body: any) => { res.status(status).json(body); return true; };
 const hash = async (value: string) => Buffer.from(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))).toString("hex");
 
-async function sendMail(to: string, subject: string, html: string) {
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) throw new Error("Email service is not configured");
-  const nodemailer = await import("nodemailer");
-  const transporter = nodemailer.default.createTransport({ service: "gmail", auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS } });
-  await transporter.sendMail({ from: `"${BRAND.name}" <${process.env.EMAIL_USER}>`, to, subject, html });
+async function sendMail(to: string, subject: string, html: string, dedupeKey = "") {
+  return sendTransactionalMail(String(to || "").trim().toLowerCase(), subject, html, dedupeKey);
 }
 
 async function generateAI(apiKey: string, model: string, body: any) {
@@ -66,6 +64,11 @@ const getLiveStoreSnapshot = async () => {
 
 export async function handleRepair(req: any, res: any): Promise<boolean> {
   const url = (req.url || "").split("?")[0];
+  const repairRoute = /^\/api\/(ai\/stylist|products\/[^/]+|discounts\/verify|orders\/create|orchestrate\/dispatch-email|cron\/abandoned-cart|admin\/customers(?:\/log)?|auth\/(forgot-password|verify-code|reset-password)|cart\/abandoned)$/.test(url);
+  if (repairRoute) {
+    try { await connectDB(); }
+    catch (error) { console.error("[repair] database unavailable", error); return reply(res, 503, { success: false, error: "Database unavailable" }); }
+  }
 
   if (req.method === "POST" && url === "/api/ai/stylist") {
     const apiKey = process.env.GEMINI_API_KEY;
@@ -101,7 +104,7 @@ export async function handleRepair(req: any, res: any): Promise<boolean> {
         const live = await getLiveStoreSnapshot();
         const { getSignupEmail, getLoginEmail } = await import("../src/utils/AtelierEmails.js");
         const html = isNewUser ? getSignupEmail(displayName || "Customer", live.products.slice(0, 4)) : getLoginEmail(displayName || "Customer", live.products.slice(0, 4));
-        await sendMail(normalizedEmail, `${BRAND.name} | ${isNewUser ? "Welcome" : "Sign-in notification"}`, html);
+        await sendMail(normalizedEmail, `${BRAND.name} | ${isNewUser ? "Welcome" : "Sign-in notification"}`, html, `${isNewUser ? "signup" : "login"}:${uid}:${isNewUser ? "account" : Math.floor(Date.now() / (5 * 60 * 1000))}`);
       } catch (emailError) { console.warn("[auth-sync-email] failed after account sync", emailError); }
       return reply(res, 200, { success: true, user });
     } catch (error) { console.error("[auth-sync]", error); return reply(res, 500, { success: false, error: "Account sync failed" }); }
@@ -146,7 +149,7 @@ export async function handleRepair(req: any, res: any): Promise<boolean> {
       if (!Array.isArray(items) || items.length === 0) return reply(res, 400, { success: false, error: "Missing or invalid items" });
       const Order = getModel("Order"); if (!Order) return reply(res, 503, { success: false, error: "Order service unavailable" });
       const order = await Order.create({ userId: userId || "GUEST", items, totalAmount: Number(totalAmount || 0), shippingDetails });
-      try { const live = await getLiveStoreSnapshot(); const { getOrderEmail } = await import("../src/utils/AtelierEmails.js"); const email = String(shippingDetails?.email || "").trim(); if (email) await sendMail(email, `${BRAND.name} | Order Confirmed`, getOrderEmail(shippingDetails?.firstName || "Customer", order._id.toString(), String(totalAmount || 0), live.products.slice(0, 4))); }
+      try { const live = await getLiveStoreSnapshot(); const { getOrderEmail } = await import("../src/utils/AtelierEmails.js"); const email = String(shippingDetails?.email || "").trim(); if (email) await sendMail(email, `${BRAND.name} | Order Confirmed`, getOrderEmail(shippingDetails?.firstName || "Customer", order._id.toString(), String(totalAmount || 0), live.products.slice(0, 4)), `order:${order._id}:confirmed`); }
       catch (emailError) { console.warn("[order-email] failed after order was saved", emailError); }
       return reply(res, 200, { success: true, orderId: order._id });
     } catch (error) { console.error("[order-create]", error); return reply(res, 500, { success: false, error: "Unable to place order" }); }
@@ -157,7 +160,7 @@ export async function handleRepair(req: any, res: any): Promise<boolean> {
       const { email, displayName, actionType, orderId } = req.body || {}; if (!email) return reply(res, 400, { success: false, error: "Email is required" });
       const live = await getLiveStoreSnapshot(); const { getAbandonedCartEmail, getShippedEmail, getDeliveredEmail, getWishlistEmail } = await import("../src/utils/AtelierEmails.js");
       let html = ""; if (actionType === "ABANDONED_CART") html = getAbandonedCartEmail(displayName || "Customer", live.products.slice(0, 4)); else if (actionType === "SHIPPED") html = getShippedEmail(displayName || "Customer", orderId || "N/A", live.products.slice(0, 4)); else if (actionType === "DELIVERED") html = getDeliveredEmail(displayName || "Customer", orderId || "N/A", live.products.slice(0, 4)); else if (actionType === "WISHLIST") html = getWishlistEmail(displayName || "Customer", live.products.slice(0, 4)); else return reply(res, 400, { success: false, error: "Unknown email action" });
-      await sendMail(String(email).trim().toLowerCase(), `${BRAND.name} | ${actionType === "SHIPPED" ? "Order In Transit" : actionType === "DELIVERED" ? "Order Delivered" : actionType === "WISHLIST" ? "Wishlist Reminder" : "Your Selection Awaits"}`, html);
+      await sendMail(String(email).trim().toLowerCase(), `${BRAND.name} | ${actionType === "SHIPPED" ? "Order In Transit" : actionType === "DELIVERED" ? "Order Delivered" : actionType === "WISHLIST" ? "Wishlist Reminder" : "Your Selection Awaits"}`, html, `dispatch:${String(actionType || "unknown").toLowerCase()}:${String(orderId || email).toLowerCase()}`);
       return reply(res, 200, { success: true });
     } catch (error) { console.error("[dispatch-email]", error); return reply(res, 500, { success: false, error: "Dispatch failed" }); }
   }
@@ -166,7 +169,7 @@ export async function handleRepair(req: any, res: any): Promise<boolean> {
     try {
       const User = getModel("User"); if (!User) return reply(res, 503, { success: false, error: "User service unavailable" });
       const abandonedUsers = await User.find({ "cart.0": { $exists: true }, cartEmailSent: false }).limit(50).lean(); const live = await getLiveStoreSnapshot(); let sent = 0;
-      for (const user of abandonedUsers as any[]) { if (!user.email) continue; try { const { getAbandonedCartEmail } = await import("../src/utils/AtelierEmails.js"); const productsByCart = live.products.filter((p: any) => (user.cart || []).some((item: any) => String(item.productId) === String(p.id))).slice(0, 4); await sendMail(String(user.email).toLowerCase(), `${BRAND.name} | Your Selection Awaits`, getAbandonedCartEmail(user.displayName || "Customer", productsByCart.length ? productsByCart : live.products.slice(0, 4))); await User.updateOne({ _id: user._id }, { $set: { cartEmailSent: true } }); sent++; } catch (emailError) { console.warn("[cron-abandoned] email failed", emailError); } }
+      for (const user of abandonedUsers as any[]) { if (!user.email) continue; try { const { getAbandonedCartEmail } = await import("../src/utils/AtelierEmails.js"); const productsByCart = live.products.filter((p: any) => (user.cart || []).some((item: any) => String(item.productId) === String(p.id))).slice(0, 4); await sendMail(String(user.email).toLowerCase(), `${BRAND.name} | Your Selection Awaits`, getAbandonedCartEmail(user.displayName || "Customer", productsByCart.length ? productsByCart : live.products.slice(0, 4)), `abandoned:${String(user._id)}`); await User.updateOne({ _id: user._id }, { $set: { cartEmailSent: true } }); sent++; } catch (emailError) { console.warn("[cron-abandoned] email failed", emailError); } }
       return reply(res, 200, { success: true, processed: abandonedUsers.length, sent });
     } catch (error) { console.error("[cron-abandoned]", error); return reply(res, 500, { success: false, error: "Cron failed" }); }
   }
@@ -182,7 +185,7 @@ export async function handleRepair(req: any, res: any): Promise<boolean> {
   }
 
   if (req.method === "POST" && url === "/api/auth/forgot-password") {
-    try { await connectDB(); const email = String(req.body?.email || "").trim().toLowerCase(); if (!email) return reply(res, 400, { success: false, error: "Email is required" }); const code = String(Math.floor(100000 + Math.random() * 900000)); await PasswordReset.deleteMany({ email }); await PasswordReset.create({ email, codeHash: await hash(code), verified: false, expiresAt: new Date(Date.now() + 600000) }); const { getOTPEmail } = await import("../src/utils/AtelierEmails.js"); await sendMail(email, `${BRAND.name} | Secure Access Key`, getOTPEmail(code)); return reply(res, 200, { success: true }); }
+    try { const email = String(req.body?.email || "").trim().toLowerCase(); if (!email) return reply(res, 400, { success: false, error: "Email is required" }); const recent = await PasswordReset.findOne({ email, createdAt: { $gt: new Date(Date.now() - 60 * 1000) } }).sort({ createdAt: -1 }); if (recent) return reply(res, 200, { success: true, throttled: true }); const code = String(Math.floor(100000 + Math.random() * 900000)); await PasswordReset.deleteMany({ email }); await PasswordReset.create({ email, codeHash: await hash(code), verified: false, expiresAt: new Date(Date.now() + 600000) }); const { getOTPEmail } = await import("../src/utils/AtelierEmails.js"); await sendMail(email, `${BRAND.name} | Secure Access Key`, getOTPEmail(code), `password-reset:${email}:${code}`); return reply(res, 200, { success: true }); }
     catch (error) { console.error("[forgot-password]", error); return reply(res, 500, { success: false, error: "Unable to send recovery code" }); }
   }
 
@@ -200,7 +203,7 @@ export async function handleRepair(req: any, res: any): Promise<boolean> {
   }
 
   if (req.method === "POST" && url === "/api/cart/abandoned") {
-    try { const { email, displayName, total, cartItems } = req.body || {}; if (email) { const { getAbandonedCartEmail } = await import("../src/utils/AtelierEmails.js"); const normalizedEmail = String(email).trim().toLowerCase(); const live = await getLiveStoreSnapshot(); const cartProductIds = Array.isArray(cartItems) ? cartItems.map((item: any) => String(item?.productId || item?.id || "")) : []; const liveProducts = live.products.filter((p: any) => cartProductIds.includes(String(p.id))).slice(0, 4); await sendMail(normalizedEmail, `${BRAND.name} | Your Selection Awaits`, getAbandonedCartEmail(displayName || "Customer", liveProducts.length ? liveProducts : live.products.slice(0, 4))); await Activity.create({ email: normalizedEmail, action: "abandoned_cart", details: JSON.stringify({ total, itemCount: Array.isArray(cartItems) ? cartItems.length : 0 }) }); } return reply(res, 200, { success: true }); }
+    try { const { email, displayName, total, cartItems } = req.body || {}; if (email) { const { getAbandonedCartEmail } = await import("../src/utils/AtelierEmails.js"); const normalizedEmail = String(email).trim().toLowerCase(); const live = await getLiveStoreSnapshot(); const cartProductIds = Array.isArray(cartItems) ? cartItems.map((item: any) => String(item?.productId || item?.id || "")) : []; const liveProducts = live.products.filter((p: any) => cartProductIds.includes(String(p.id))).slice(0, 4); await sendMail(normalizedEmail, `${BRAND.name} | Your Selection Awaits`, getAbandonedCartEmail(displayName || "Customer", liveProducts.length ? liveProducts : live.products.slice(0, 4)), `abandoned:${normalizedEmail}:${cartProductIds.sort().join(",")}`); await Activity.create({ email: normalizedEmail, action: "abandoned_cart", details: JSON.stringify({ total, itemCount: Array.isArray(cartItems) ? cartItems.length : 0 }) }); } return reply(res, 200, { success: true }); }
     catch (error) { console.error("[abandoned-cart]", error); return reply(res, 200, { success: true }); }
   }
 
