@@ -64,7 +64,7 @@ const getLiveStoreSnapshot = async () => {
 
 export async function handleRepair(req: any, res: any): Promise<boolean> {
   const url = (req.url || "").split("?")[0];
-  const repairRoute = /^\\/api\\/(ai\\/stylist|products\\/[^/]+|discounts\\/verify|orders\\/create|orchestrate\\/dispatch-email|cron\\/abandoned-cart|admin\\/customers(?:\\/log)?|auth\\/(forgot-password|verify-code|reset-password)|cart\\/abandoned)$/.test(url);
+  const repairRoute = /^\/api\/(ai\/stylist|products\/[^/]+|discounts\/verify|orders\/create|orchestrate\/dispatch-email|cron\/abandoned-cart|admin\/customers(?:\/log)?|auth\/(forgot-password|verify-code|reset-password)|cart\/abandoned)$/.test(url);
   if (repairRoute) {
     try { await connectDB(); }
     catch (error) { console.error("[repair] database unavailable", error); return reply(res, 503, { success: false, error: "Database unavailable" }); }
