@@ -17,7 +17,7 @@ export async function handleConfigRoutes(req:any, res:any):Promise<boolean> {
   try {
     await connectDB();
     const payload = clean(req.body || {});
-    const config = await SiteConfig.findOneAndUpdate(
+    const config = await (SiteConfig as any).findOneAndUpdate(
       { key: "global" },
       { $set: payload, $setOnInsert: { key: "global" } },
       { upsert: true, new: true, runValidators: false, setDefaultsOnInsert: true }
