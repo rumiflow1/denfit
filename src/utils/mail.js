@@ -2,7 +2,7 @@ import nodemailer from "nodemailer";
 import mongoose from "mongoose";
 import crypto from "crypto";
 
-const MailDelivery = (mongoose.models.MailDelivery as any) || mongoose.model(
+const MailDelivery = mongoose.models.MailDelivery || mongoose.model(
   "MailDelivery",
   new mongoose.Schema(
     {
@@ -13,12 +13,12 @@ const MailDelivery = (mongoose.models.MailDelivery as any) || mongoose.model(
   )
 );
 
-const normalizeKey = (to:any, subject:any, html:any, dedupeKey:any) => {
+const normalizeKey = (to, subject, html, dedupeKey) => {
   const raw = String(dedupeKey || "").trim() || `${String(to).trim().toLowerCase()}|${String(subject).trim()}|${String(html).slice(0, 400)}`;
   return crypto.createHash("sha256").update(raw).digest("hex");
 };
 
-export async function sendTransactionalMail(to:any, subject:any, html:any, dedupeKey="") {
+export async function sendTransactionalMail(to, subject, html, dedupeKey = "") {
   const recipient = String(to || "").trim().toLowerCase();
   if (!recipient) throw new Error("Recipient email is required");
   if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) throw new Error("Email transport is not configured");
@@ -26,8 +26,8 @@ export async function sendTransactionalMail(to:any, subject:any, html:any, dedup
   const key = normalizeKey(recipient, subject, html, dedupeKey);
   try {
     await MailDelivery.create({ key });
-  } catch (error:any) {
-    if (error?.code === 11000) return { sent: false, duplicate: true };
+  } catch (error) {
+    if (error && error.code === 11000) return { sent: false, duplicate: true };
     throw error;
   }
 
