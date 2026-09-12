@@ -1,9 +1,6 @@
 import express from 'express';
-import { handleAIStylist } from '../controllers/aiController.ts';
+import { handleAIStylist } from '../controllers/aiController.js';
 
 const router = express.Router();
-
-// The Master AI Stylist Endpoint
 router.post('/stylist', handleAIStylist);
-
 export default router;
