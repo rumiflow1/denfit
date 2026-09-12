@@ -11,6 +11,7 @@ import { handleTryOn } from "./tryOn.js";
 import { handleAuthSync } from "./authSync.js";
 import { handleTransactionalEmailRoutes } from "./transactionalEmails.js";
 import { handleConfigRoutes } from "./configRoutes.js";
+import { handleReviewRoutes } from "./reviewRoutes.js";
 import { logAuthActivity } from "./activity.js";
 
 export default async function handler(req: Request, res: Response) {
@@ -23,24 +24,18 @@ export default async function handler(req: Request, res: Response) {
       return res.status(503).json({ ok: false, database: "unavailable", error: process.env.NODE_ENV === "production" ? "Database unavailable" : error?.message });
     }
   }
-
   if (await handleAuthSync(req, res)) return;
   if (await handleAI(req, res)) return;
   if (await handleTryOn(req, res)) return;
   if (await handleOrderRoutes(req, res)) return;
+  if (await handleReviewRoutes(req, res)) return;
   if (await handleCustomerRoutes(req, res)) return;
   if (await handleMarketingRoutes(req, res)) return;
   if (await handleTransactionalEmailRoutes(req, res)) return;
   if (await handleConfigRoutes(req, res)) return;
   if (await handleRepair(req, res)) return;
-
-  try {
-    await connectDB();
-  } catch (error: any) {
-    console.error("[api] database initialization failed", error);
-    return res.status(503).json({ success: false, error: "Database unavailable" });
-  }
-
+  try { await connectDB(); }
+  catch (error: any) { console.error("[api] database initialization failed", error); return res.status(503).json({ success: false, error: "Database unavailable" }); }
   await logAuthActivity(req, res);
   return app(req, res);
 }
