@@ -1,68 +1,50 @@
 import mongoose from 'mongoose';
 
-const generateTrackingNumber = () => {
-  const year = new Date().getFullYear();
-  const random = Math.floor(Math.random() * 100000).toString().padStart(5, '0');
-  return `DNF-${year}-${random}`;
-};
-
 const OrderSchema = new mongoose.Schema({
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  orderNumber: { type: String, unique: true },
-  trackingNumber: { 
-    type: String, 
-    default: generateTrackingNumber,
-    unique: true,
-    sparse: true // Allow multiple null values but unique for non-null
-  },
+  // Guest checkout orders are supported; authenticated users are linked by uid/string.
+  userId: { type: String, default: 'GUEST', index: true },
+  orderNumber: { type: String, unique: true, sparse: true, index: true },
+  // A tracking number is assigned only when the order is dispatched/shipped.
+  trackingNumber: { type: String, default: '', index: true, sparse: true },
   items: [{
-    productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
+    productId: { type: mongoose.Schema.Types.Mixed },
     name: String,
+    title: String,
     image: String,
     images: [String],
     price: Number,
     quantity: Number,
     size: String,
-    color: String
+    color: String,
+    discountPrice: Number,
+    subtotal: Number
   }],
-  shippingAddress: {
-    name: String,
-    phone: String,
-    address: String,
-    city: String,
-    state: String,
-    zipCode: String,
-    country: String
-  },
-  subtotal: { type: Number, required: true },
-  discount: { type: Number, default: 0 },
+  email: { type: String, lowercase: true, trim: true, index: true },
+  fullName: String,
+  phone: String,
+  shippingAddress: mongoose.Schema.Types.Mixed,
+  shippingDetails: mongoose.Schema.Types.Mixed,
+  subtotal: { type: Number, default: 0 },
+  discountAmount: { type: Number, default: 0 },
+  discountCode: { type: String, default: '' },
   shippingCost: { type: Number, default: 0 },
-  total: { type: Number, required: true },
+  totalAmount: { type: Number, default: 0 },
   currency: { type: String, default: 'PKR' },
-  status: { 
-    type: String, 
-    enum: ['pending', 'packed', 'shipped', 'on the way', 'delivered', 'cancelled'],
-    default: 'pending'
+  status: {
+    type: String,
+    enum: ['Pending', 'Confirmed', 'Packed', 'Shipped', 'On the Way', 'Delivered', 'Cancelled'],
+    default: 'Pending'
   },
+  statusHistory: [{ status: String, at: Date }],
+  tracking: mongoose.Schema.Types.Mixed,
   paymentMethod: String,
   paymentStatus: { type: String, default: 'pending' },
   notes: String
-}, { timestamps: true });
+}, { timestamps: true, strict: false });
 
-// Generate order number before saving
 OrderSchema.pre('save', function(next) {
-  if (!this.orderNumber) {
-    const timestamp = Date.now().toString(36).toUpperCase();
-    const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-    this.orderNumber = `ORD-${timestamp}-${random}`;
-  }
-  
-  // Generate tracking number if not set
-  if (!this.trackingNumber) {
-    this.trackingNumber = generateTrackingNumber();
-  }
-  
+  // Public order numbers are created by the order route. Never create a tracking number here.
   next();
 });
 
-export default mongoose.model('Order', OrderSchema);
+export default mongoose.models.Order || mongoose.model('Order', OrderSchema);
