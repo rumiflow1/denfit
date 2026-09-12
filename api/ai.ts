@@ -67,3 +67,7 @@ export async function handleAI(req: any, res: any): Promise<boolean> {
   // The assistant remains usable even when an external AI key/provider is unavailable.
   return reply(res, 200, { success: true, text: localStylistReply(message, products, currency), model: "denfit-local-fallback" });
 }
+
+
+// Prevent Vercel from treating this internal route helper as an invalid function.
+export default function internalHelper(req:any,res:any){ return res.status(404).json({ error: 'Not found' }); }
