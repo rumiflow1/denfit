@@ -6,24 +6,29 @@ const generate = async (apiKey: string, model: string, body: any, timeoutMs: num
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        signal: controller.signal,
-        body: JSON.stringify(body),
-      }
-    );
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify(body),
+    });
     const data: any = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(`${model}:${response.status}:${String(data?.error?.message || "")}`);
-    return data?.candidates?.[0]?.content?.parts
-      ?.map((part: any) => String(part?.text || ""))
-      .join("")
-      .trim() || "";
-  } finally {
-    clearTimeout(timer);
-  }
+    return data?.candidates?.[0]?.content?.parts?.map((part: any) => String(part?.text || "")).join("").trim() || "";
+  } finally { clearTimeout(timer); }
+};
+
+const localStylistReply = (message: string, products: any[], currency: string) => {
+  const q = message.toLowerCase();
+  const live = Array.isArray(products) ? products.filter((p:any) => p && (p.id || p._id) && (p.name || p.title)) : [];
+  const pick = live.slice(0, 3);
+  const money = (value:any) => Number.isFinite(Number(value)) ? `${currency} ${Number(value).toLocaleString()}` : '';
+  if (!live.length) return `Welcome to ${BRAND.name}. I can help with styling, collections, sizing and orders. Tell me what you want to wear and I’ll guide you.`;
+  if (/new|latest|arrival|trending/i.test(q)) return `Here are a few current ${BRAND.name} pieces worth exploring: ${pick.map((p:any) => `${p.name || p.title}${p.price ? ` (${money(p.price)})` : ''}`).join(', ')}.`;
+  if (/price|cost|budget|cheap|expensive/i.test(q)) return `I can help compare prices. ${pick.map((p:any) => `${p.name || p.title}: ${money(p.discountPrice ?? p.price)}`).join(' · ')}.`;
+  if (/order|track|shipping|delivery|return/i.test(q)) return `I can help with your order journey. For a specific order, open your profile and use the order details to view the latest status and tracking information.`;
+  if (/recommend|style|wear|outfit|look|dress/i.test(q)) return `For a polished ${BRAND.name} look, I’d start with ${pick.map((p:any) => p.name || p.title).join(', ')}. Tell me your occasion, preferred colour and fit for a more precise recommendation.`;
+  return `Absolutely. I’m your ${BRAND.name} style assistant. I can help you choose products, compare prices, plan an outfit, and navigate your order. What are you shopping for?`;
 };
 
 export async function handleAI(req: any, res: any): Promise<boolean> {
@@ -32,72 +37,33 @@ export async function handleAI(req: any, res: any): Promise<boolean> {
 
   const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
   const message = String(req.body?.message || "").trim();
-
-  if (!apiKey) {
-    return reply(res, 503, {
-      success: false,
-      error: "AI service is not configured",
-      text: "The AI stylist is temporarily unavailable.",
-    });
-  }
-  if (!message) {
-    return reply(res, 400, {
-      success: false,
-      error: "Message is required",
-      text: "Tell me what you are looking for.",
-    });
-  }
+  if (!message) return reply(res, 400, { success: false, error: "Message is required", text: "Tell me what you are looking for." });
 
   const products = Array.isArray(req.body?.products) ? req.body.products.slice(0, 24) : [];
   const siteConfig = req.body?.siteConfig || {};
-  const history = Array.isArray(req.body?.history) ? req.body.history.slice(-4) : [];
+  const currency = String(req.body?.currency || "PKR").toUpperCase();
+  const history = Array.isArray(req.body?.history) ? req.body.history.slice(-6) : [];
 
-  const system = `You are ${BRAND.name}'s premium shopping stylist. Use only the supplied live store data. Never invent products, prices, stock, policies, links or social accounts. Keep replies concise, natural and polished. Do not use decorative markdown stars. If asked to open a product, output exactly [NAV:PRODUCT:<id>]. For home/products/cart/login/profile/contact/FAQ use the matching [NAV:*] token. LIVE PRODUCTS: ${JSON.stringify(products)} LIVE SITE CONFIG: ${JSON.stringify(siteConfig)}`;
-
+  const system = `You are ${BRAND.name}'s premium shopping stylist. Use only supplied live store data. Never invent products, prices, stock, policies or links. Keep replies concise, natural and polished. Do not use decorative markdown. LIVE PRODUCTS: ${JSON.stringify(products)} LIVE SITE CONFIG: ${JSON.stringify(siteConfig)}`;
   const contents = [
-    ...history.map((m: any) => ({
-      role: m?.role === "model" ? "model" : "user",
-      parts: [{ text: String(m?.text || m?.content || "") }],
-    })),
+    ...history.map((m:any) => ({ role: m?.role === "model" ? "model" : "user", parts: [{ text: String(m?.text || m?.content || "") }] })),
     { role: "user", parts: [{ text: message }] },
   ];
-
-  const base = {
-    systemInstruction: { parts: [{ text: system }] },
-    contents,
-    generationConfig: { maxOutputTokens: 320, temperature: 0.65 },
-  };
-
-  const attempts: Array<{ model: string; timeout: number; body: any }> = [
-    { model: "gemini-2.5-flash-lite", timeout: 4500, body: base },
-    {
-      model: "gemini-2.5-flash",
-      timeout: 6000,
-      body: {
-        ...base,
-        generationConfig: {
-          ...base.generationConfig,
-          thinkingConfig: { thinkingBudget: 0 },
-        },
-      },
-    },
+  const base = { systemInstruction: { parts: [{ text: system }] }, contents, generationConfig: { maxOutputTokens: 420, temperature: 0.65 } };
+  const attempts = [
+    { model: String(process.env.GEMINI_TEXT_MODEL || "gemini-2.5-flash-lite"), timeout: 12000, body: base },
+    { model: "gemini-2.5-flash", timeout: 18000, body: base },
   ];
 
-  let last: any = null;
-  for (const attempt of attempts) {
-    try {
-      const text = await generate(apiKey, attempt.model, attempt.body, attempt.timeout);
-      if (text) return reply(res, 200, { success: true, text, model: attempt.model });
-    } catch (error) {
-      last = error;
-      console.warn("[ai]", attempt.model, "unavailable", error);
+  if (apiKey) {
+    for (const attempt of attempts) {
+      try {
+        const text = await generate(apiKey, attempt.model, attempt.body, attempt.timeout);
+        if (text) return reply(res, 200, { success: true, text, model: attempt.model });
+      } catch (error) { console.warn("[ai] provider attempt failed", attempt.model, error); }
     }
   }
 
-  console.error("[ai] all attempts failed", last);
-  return reply(res, 503, {
-    success: false,
-    error: "AI service is temporarily unavailable. Please try again.",
-    text: "The live stylist is taking a moment. Please try again.",
-  });
+  // The assistant remains usable even when an external AI key/provider is unavailable.
+  return reply(res, 200, { success: true, text: localStylistReply(message, products, currency), model: "denfit-local-fallback" });
 }
