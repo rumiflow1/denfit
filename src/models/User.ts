@@ -7,6 +7,9 @@ const UserSchema = new mongoose.Schema({
   role: { type: String, enum: ['user', 'admin'], default: 'user' },
   phone: String,
   photoURL: String,
+  password: String,
+  otp: String,
+  otpExpires: Date,
   
   // Tracking for Admin (Point #12)
   activity: [{
