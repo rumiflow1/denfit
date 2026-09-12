@@ -10,27 +10,18 @@ export const requestPasswordReset = async (req: Request, res: Response) => {
   try {
     const { email } = req.body;
     const user = await User.findOne({ email });
-    
-    // Security: Always return success message to prevent email enumeration attacks
     if (!user) {
       return res.json({ success: true, message: "If an account exists, a reset code has been sent." });
     }
-
-    // DUPLICATE PREVENTION: Check if OTP was sent in the last 2 minutes
     const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
     if (user.otp && user.otpExpires && user.otpExpires > twoMinutesAgo) {
       return res.json({ success: true, message: "A reset code was already sent recently. Please check your email." });
     }
-
     const otp = generateOTP();
-    const expiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes valid
-
+    const expiry = new Date(Date.now() + 10 * 60 * 1000);
     await User.findByIdAndUpdate(user._id, { otp, otpExpires: expiry });
-
     const config = await Config.findOne({ key: 'global' });
     const brandName = config?.branding?.brandName || 'Denfit';
-    const logoUrl = config?.branding?.logoUrl || '';
-
     const emailContent = `
       <h1 style="font-family: Georgia, serif; font-size: 24px; font-weight: 400; margin-bottom: 20px; color: #0B1220;">Password Reset Request</h1>
       <p style="margin-bottom: 16px;">Hello ${user.name || 'Valued Customer'},</p>
@@ -40,11 +31,8 @@ export const requestPasswordReset = async (req: Request, res: Response) => {
       </div>
       <p style="color: #666666; font-size: 14px;">If you did not request this, please ignore this email. Your password will remain unchanged.</p>
     `;
-
     const html = atelierBase(emailContent, 'Secure your account', '#0B1220');
-
     await sendEmail({ to: email, subject: `Password Reset - ${brandName}`, html });
-    
     res.json({ success: true, message: "Reset code sent to your email." });
   } catch (error: any) {
     console.error("Password reset request error:", error);
@@ -56,17 +44,9 @@ export const verifyCode = async (req: Request, res: Response) => {
   try {
     const { email, code } = req.body;
     const user = await User.findOne({ email });
-
-    if (!user || !user.otp || !user.otpExpires) {
-      return res.status(400).json({ success: false, message: "No reset request found." });
-    }
-    if (new Date() > user.otpExpires) {
-      return res.status(400).json({ success: false, message: "Reset code has expired. Please request a new one." });
-    }
-    if (user.otp !== code) {
-      return res.status(400).json({ success: false, message: "Invalid reset code." });
-    }
-
+    if (!user || !user.otp || !user.otpExpires) return res.status(400).json({ success: false, message: "No reset request found." });
+    if (new Date() > user.otpExpires) return res.status(400).json({ success: false, message: "Reset code has expired. Please request a new one." });
+    if (user.otp !== code) return res.status(400).json({ success: false, message: "Invalid reset code." });
     res.json({ success: true, message: "Code verified. You may now reset your password." });
   } catch (error: any) {
     res.status(500).json({ success: false, message: "Server error." });
@@ -76,29 +56,25 @@ export const verifyCode = async (req: Request, res: Response) => {
 export const resetPassword = async (req: Request, res: Response) => {
   try {
     const { email, code, newPassword, confirmPassword } = req.body;
-
-    if (newPassword !== confirmPassword) {
+    const normalizedPassword = typeof newPassword === 'string' ? newPassword : '';
+    // Keep the API compatible with the existing frontend while still validating confirmation when supplied.
+    const normalizedConfirmation = typeof confirmPassword === 'string' ? confirmPassword : normalizedPassword;
+    if (normalizedPassword !== normalizedConfirmation) {
       return res.status(400).json({ success: false, message: "Passwords do not match." });
     }
-
-    if (newPassword.length < 8) {
+    if (normalizedPassword.length < 8) {
       return res.status(400).json({ success: false, message: "Password must be at least 8 characters long." });
     }
-
     const user = await User.findOne({ email });
-    if (!user || user.otp !== code || new Date() > user.otpExpires!) {
+    if (!user || !user.otp || !user.otpExpires || user.otp !== code || new Date() > user.otpExpires) {
       return res.status(400).json({ success: false, message: "Invalid or expired reset code." });
     }
-
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
-    
-    // CRITICAL: Clear OTP after successful reset to prevent reuse
-    await User.findByIdAndUpdate(user._id, { 
-      password: hashedPassword, 
-      otp: undefined, 
-      otpExpires: undefined 
+    const hashedPassword = await bcrypt.hash(normalizedPassword, 10);
+    await User.findByIdAndUpdate(user._id, {
+      password: hashedPassword,
+      otp: undefined,
+      otpExpires: undefined
     });
-
     res.json({ success: true, message: "Password successfully updated. You may now log in." });
   } catch (error: any) {
     console.error("Password reset error:", error);
