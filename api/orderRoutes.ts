@@ -69,7 +69,7 @@ export async function handleOrderRoutes(req:any,res:any):Promise<boolean>{
 
     if(isCreate){
       const body=req.body||{};
-      const items=Array.isArray(body.items)?body.items:[];
+      const items=(Array.isArray(body.items)?body.items:[]).map((item:any)=>({...item,productId:String(item?.productId||item?.id||item?._id||''),quantity:Math.max(1,Number(item?.quantity||1)),price:Number(item?.price||0),subtotal:Number(item?.subtotal??(Number(item?.price||0)*Math.max(1,Number(item?.quantity||1))))}));
       const shippingDetails={
         ...(body.shippingDetails||{}),
         firstName: body.shippingDetails?.firstName || body.fullName || body.shippingAddress?.fullName || "",
@@ -81,7 +81,7 @@ export async function handleOrderRoutes(req:any,res:any):Promise<boolean>{
       const fullName=String(body.fullName||[shippingDetails.firstName,shippingDetails.lastName].filter(Boolean).join(" ")||"").trim();
       const email=String(shippingDetails.email||body.email||"").trim().toLowerCase();
 
-      if(!items.length||!fullName||!email)return res.status(400).json({success:false,error:"Missing customer name, email or order items"});
+      if(!items.length||items.some((item:any)=>!item.productId)||!fullName||!email)return res.status(400).json({success:false,error:"Missing customer name, email or valid order items"});
 
       const currency=await configuredCurrency(body.currency);
       const now=new Date();
