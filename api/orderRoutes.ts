@@ -44,3 +44,7 @@ export async function handleOrderRoutes(req:any,res:any):Promise<boolean>{
     return res.status(200).json({success:true,order});
   }catch(error){console.error("[orders] route failed",error);return res.status(500).json({success:false,error:"Order operation failed"});}
 }
+
+
+// Prevent Vercel from treating this internal route helper as an invalid function.
+export default function internalHelper(req:any,res:any){ return res.status(404).json({ error: 'Not found' }); }
