@@ -6,11 +6,15 @@ const MailDelivery = (mongoose.models.MailDelivery as any) || mongoose.model("Ma
   createdAt: { type: Date, default: Date.now, expires: 86400 },
 }, { collection: "mail_deliveries" }));
 
+const publicApiBase = () => String(process.env.PUBLIC_API_URL || process.env.BACKEND_URL || "https://denfit.vercel.app").replace(/\/$/, "");
+
 export const emailImageUrl = (value: any) => {
   const raw = String(value ?? "").trim();
   if (!raw) return "";
   if (/^https?:\/\//i.test(raw)) return raw;
   if (/^\/\//.test(raw)) return `https:${raw}`;
+  // Admin uploads are served by the API, not the storefront. Email clients need an absolute public URL.
+  if (raw.startsWith("/api/media/")) return `${publicApiBase()}${raw}`;
   const base = BRAND.siteUrl.replace(/\/$/, "");
   return raw.startsWith("/") ? `${base}${raw}` : `${base}/${raw.replace(/^\.\//, "")}`;
 };
@@ -38,8 +42,16 @@ export const sendTransactionalMail = async (to: string, subject: string, html: s
   if (!claimed) return { sent: false, duplicate: true };
   try {
     const nodemailer = await import("nodemailer");
-    const transporter = nodemailer.default.createTransport({ service: "gmail", auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS } });
-    await transporter.sendMail({ from: `"${BRAND.name}" <${process.env.EMAIL_USER}>`, to, subject, html });
+    const transporter = nodemailer.default.createTransport({
+      service: "gmail",
+      auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
+    });
+    await transporter.sendMail({
+      from: `"${BRAND.name}" <${process.env.EMAIL_USER}>`,
+      to,
+      subject,
+      html
+    });
     return { sent: true, duplicate: false };
   } catch (error) {
     await releaseEmailClaim(dedupeKey);
