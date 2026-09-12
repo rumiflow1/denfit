@@ -121,10 +121,15 @@ export interface IUser extends Document {
 
 interface IOrderItem {
   productId: string;
+  name?: string;
+  title?: string;
+  image?: string;
+  images?: string[];
   quantity: number;
   size?: string;
   color?: string;
   price: number;
+  discountPrice?: number;
   subtotal: number;
 }
 
@@ -256,6 +261,10 @@ const UserActivitySchema = new Schema<IUserActivity>(
 const CartItemSchema = new Schema<ICartItem>(
   {
     productId: { type: String, required: true },
+    name: String,
+    title: String,
+    image: String,
+    images: [String],
     quantity: { type: Number, required: true, default: 1 },
     size: { type: String },
     color: { type: String },
@@ -271,6 +280,7 @@ const OrderItemSchema = new Schema<IOrderItem>(
     size: { type: String },
     color: { type: String },
     price: { type: Number, required: true },
+    discountPrice: Number,
     subtotal: { type: Number, required: true },
   },
   { _id: false }
@@ -382,7 +392,7 @@ const NewsletterSubscriptionSchema = new Schema<INewsletterSubscription>({
 const User: Model<IUser> = (mongoose.models.User as Model<IUser>) || mongoose.model<IUser>("User", UserSchema);
 const Product: Model<IProduct> = (mongoose.models.Product as Model<IProduct>) || mongoose.model<IProduct>("Product", ProductSchema);
 const SiteConfig: Model<ISiteConfig> = (mongoose.models.SiteConfig as Model<ISiteConfig>) || mongoose.model<ISiteConfig>("SiteConfig", SiteConfigSchema);
-const LocalOrderSchema = new Schema<any>({ userId:String, items:{type:[OrderItemSchema],default:()=>[]}, totalAmount:{type:Number,default:0}, status:{type:String,default:"Pending"}, shippingDetails:{ firstName:String,lastName:String,email:String,phone:String,address:{line1:String,line2:String,city:String,state:String,postalCode:String,country:String} }, currency:{type:String,default:"PKR"}, trackingNumber:String, statusHistory:{type:[{status:String,at:{type:Date,default:Date.now}}],default:()=>[]} },{timestamps:true});
+const LocalOrderSchema = new Schema<any>({ userId:String, orderNumber:{type:String,index:true}, items:{type:[OrderItemSchema],default:()=>[]}, subtotal:{type:Number,default:0}, discountAmount:{type:Number,default:0}, discountCode:String, shippingCost:{type:Number,default:0}, totalAmount:{type:Number,default:0}, status:{type:String,default:"Pending"}, shippingDetails:{ firstName:String,lastName:String,email:String,phone:String,address:{line1:String,line2:String,city:String,state:String,postalCode:String,country:String} }, currency:{type:String,default:"PKR"}, trackingNumber:String, statusHistory:{type:[{status:String,at:{type:Date,default:Date.now}}],default:()=>[]} },{timestamps:true});
 const Order: Model<IOrder> = (mongoose.models.Order as Model<IOrder>) || mongoose.model<IOrder>("Order", LocalOrderSchema);
 const Media: Model<IMedia> = (mongoose.models.Media as Model<IMedia>) || mongoose.model<IMedia>("Media", MediaSchema);
 const DiscountCode: Model<IDiscountCode> = (mongoose.models.DiscountCode as Model<IDiscountCode>) || mongoose.model<IDiscountCode>("DiscountCode", DiscountCodeSchema);
@@ -701,39 +711,34 @@ app.delete("/api/admin/reviews/:productId/:reviewId", async (req: Request, res: 
 
 app.post("/api/orders/create", async (req: Request, res: Response) => {
   try {
-    const { items, totalAmount, shippingDetails, userId } = req.body;
+    const { items, totalAmount, shippingDetails, userId, currency, subtotal, discountAmount, discountCode, shippingCost } = req.body;
+    if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "Missing or invalid items" });
 
-    if (!items || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ error: "Missing or invalid items" });
-    }
+    const enrichedItems = await Promise.all(items.map(async (raw: any) => {
+      const source: any = raw || {};
+      let product: any = null;
+      try { product = source.productId ? await Product.findById(source.productId).lean() : null; } catch {}
+      const image = source.image || source.images?.[0] || product?.images?.[0] || "";
+      const name = source.name || source.title || product?.title || "Product";
+      const price = Number(source.discountPrice ?? source.price ?? product?.discountPrice ?? product?.price ?? 0);
+      const quantity = Math.max(1, Number(source.quantity || 1));
+      return { ...source, productId: String(source.productId || product?._id || ""), name, title: name, image, images: source.images?.length ? source.images : (image ? [image] : []), price, discountPrice: source.discountPrice ?? product?.discountPrice, quantity, subtotal: Number(source.subtotal ?? price * quantity) };
+    }));
 
-    // Secure the order in the database first
-    const order = new Order({ userId, items, totalAmount, shippingDetails });
+    const orderNumber = "DNF-" + new Date().toISOString().slice(2,10).replace(/-/g,"") + "-" + crypto.randomInt(1000,9999);
+    const order = new Order({ userId: userId || "GUEST", orderNumber, items: enrichedItems, totalAmount: Number(totalAmount || 0), subtotal: Number(subtotal || totalAmount || 0), discountAmount: Number(discountAmount || 0), discountCode: discountCode || "", shippingCost: Number(shippingCost || 0), shippingDetails, currency: String(currency || "PKR").toUpperCase(), status: "Confirmed", statusHistory: [{ status: "Confirmed", at: new Date() }] });
     await order.save();
 
-    // Resilient Email execution: If Gmail SMTP fails, the order placement STILL succeeds!
-    try {
-      const emailHtml = getOrderEmail(
-        shippingDetails?.firstName || "Patron",
-        order._id.toString(),
-        totalAmount.toString()
-      );
-
-      const transporter = nodemailer.createTransport({
-        service: "gmail",
-        auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
-      });
-      await transporter.sendMail({
-        from: `"DENFIT" <${process.env.EMAIL_USER}>`,
-        to: shippingDetails?.email,
-        subject: "Acquisition Secured",
-        html: emailHtml,
-      });
-    } catch (emailErr) {
-      console.warn("⚠️ SMTP Relay Alert: Confirmation email failed to send, but order was secured safely in database.", emailErr);
+    const recipient = String(shippingDetails?.email || "").trim().toLowerCase();
+    if (recipient) {
+      try {
+        const emailHtml = getOrderEmail(shippingDetails?.firstName || "Customer", String(orderNumber), String(order.totalAmount), [], order);
+        await sendTransactionalMail(recipient, `${process.env.BRAND_NAME || "DENFIT"} | Order confirmed`, emailHtml, `order-confirmation:${order._id}`);
+      } catch (emailErr) {
+        console.warn("Order confirmation email failed after order was saved.", emailErr);
+      }
     }
-
-    res.json({ success: true, orderId: order._id });
+    res.json({ success: true, orderId: order._id, orderNumber, order });
   } catch (err) {
     console.error("Order creation fatal database failure:", err);
     res.status(500).json({ success: false });
@@ -768,7 +773,7 @@ app.put("/api/admin/orders/:id/status", async (req: Request, res: Response) => {
       try {
         const customer = existing.shippingDetails?.firstName || "Customer";
         const subject = `${process.env.BRAND_NAME || "DENFIT"} | Order ${status}`;
-        await sendTransactionalMail(existing.shippingDetails.email, subject, getStatusEmail(customer, String(existing._id), status, existing.trackingNumber || "", existing.totalAmount, (existing as any).currency || "PKR"), `order-status:${existing._id}:${status}`);
+        await sendTransactionalMail(existing.shippingDetails.email, subject, getStatusEmail(customer, String(existing.orderNumber || existing._id), status, existing.trackingNumber || "", existing.totalAmount, (existing as any).currency || "PKR", [], new Date(), existing), `order-status:${existing._id}:${status}`);
       } catch (mailError) { console.warn("[order-status] email failed", mailError); }
     }
     res.json({ success: true, order: existing });
