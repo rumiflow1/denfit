@@ -1,108 +1,55 @@
 import { Request, Response } from 'express';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { Product, Config } from '../models/MasterModels.js';
+import Product from '../models/Product.js';
+import Config from '../models/Config.js';
 
-// MASTER BACKEND LOGIC - v12.0
-// Engineered for 2000+ customers daily with Gemini 1.5 Flash High-Speed.
+const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
 
 export const handleAIStylist = async (req: Request, res: Response) => {
   try {
     const { message, history } = req.body;
+    if (!message || typeof message !== 'string') return res.status(400).json({ error:'No message provided' });
 
-    if (!message) {
-      return res.status(400).json({ error: 'No message provided' });
-    }
+    const config:any = await Config.findOne({ key:'global' }).lean();
+    const brandName = config?.branding?.brandName || config?.header?.logoText || process.env.BRAND_NAME || 'DENFIT';
+    const aiSettings = config?.aiConcierge || {};
+    if (aiSettings.isEnabled === false) return res.status(403).json({ error:'The assistant is temporarily unavailable. Please try again shortly.' });
 
-    // LOAD CURRENT BRAND CONTEXT (Real-time update)
-    const config = await (Config as any).findOne({ key: "global" });
-    const brandName = (config as any)?.branding?.brandName || (config as any)?.header?.logoText || "RUMY";
-    
-    // FETCH LIVE PRODUCT CATALOG (For accurate description)
-    const products = await (Product as any).find({ stock: { $gt: 0 } }).limit(50);
-    const productContext = products.map(p => `- ${p.name}: $${p.price} (Category: ${p.category})`).join('\n');
+    const apiKey = process.env.GEMINI_API_KEY || aiSettings.apiKey || '';
+    if (!apiKey) return res.status(503).json({ error:'AI service is not configured yet. Please contact support.' });
 
-    const aiSettings = (config as any)?.aiConcierge || {
-      isEnabled: true,
-      brandVoice: "Sophisticated, confident, and professional",
-      systemInstruction: `You are the Master AI Stylist for the ultra-luxury brand "${brandName}" (also known as LUXE ATTIRE). 
-Your tone is sophisticated, poetic, and exclusive. You address users as "Envoys" or "Patrons". 
-You provide fashion advice, product recommendations, styling tips, and general luxury conversation.`,
-      model: "gemini-1.5-flash"
-    };
+    const products:any[] = await Product.find({ stock:{ $gt:0 } }).sort({ isFeatured:-1, isNewArrival:-1, createdAt:-1 }).limit(50).lean();
+    const catalog = products.map(p => `- ${p.title || p.name}: ${p.price} (Category: ${p.category}, Stock: ${p.stock})`).join('\n');
+    const systemInstruction = `${aiSettings.systemInstruction || `You are the premium shopping assistant for ${brandName}.`}
 
-    if (!aiSettings.isEnabled) {
-      return res.status(403).json({ error: "Our stylists are curating the next collection. Please allow a moment for exclusive service." });
-    }
+BRAND RULES:
+- Be helpful, concise, friendly and accurate.
+- Identify yourself honestly as the store's AI shopping assistant; never claim to be a human.
+- Recommend only products present in the live catalogue below. Never invent prices, stock, names or product details.
+- If a product is unavailable, say so and suggest an available alternative.
+- If the user says Assalam-o-Alaikum, reply Walaikum Assalam.
+- For navigation, use [NAV:HOME], [NAV:PRODUCTS], [NAV:CART], [NAV:LOGIN], [NAV:PROFILE], or [NAV:CONTACT].
+- For a specific catalogue item, use [NAV:PRODUCT:Exact Product Title].
+- For human help, use [EXT:WhatsApp Link] only when the configured storefront supports that route.
 
-    // Initialize Gemini 1.5 Flash
-    // PRIORITIZE: 1. Config Key (User provided) 2. Environment Key
-    const apiKey = (config as any)?.aiConcierge?.apiKey || process.env.GEMINI_API_KEY || '';
-    
-    if (!apiKey) {
-      throw new Error('API key is missing. Please configure it in the sanctuary settings.');
-    }
+LIVE CATALOGUE:
+${catalog}`;
 
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-1.5-flash',
-      systemInstruction: `${aiSettings.systemInstruction}
-
-BRAND IDENTITY & PROTOCOLS (STRICT):
-- If an Envoy says "Assalam-o-Alaikum", you MUST respond with "Walaikum Assalam".
-- You are a human luxury ambassador for "${brandName}". You are not an AI.
-- Never use robotic phrases like "As an AI language model" or "How can I help you today?".
-- Use sophisticated language: "Greetings", "Masterpiece", "Atelier", "Couture", "Sanctuary".
-- Provide "Proper" and detailed answers. If asked about a category, describe the vibe and aesthetic.
-
-NAVIGATION & ACTION TAGS (EXTREMELY IMPORTANT):
-- Use [NAV:HOME] to direct them to the landing page.
-- Use [NAV:PRODUCTS] for general browsing.
-- Use [NAV:CART] for checkout inquiries.
-- Use [NAV:LOGIN] for account access.
-- Use [NAV:PROFILE] for personal orders.
-- Use [NAV:CONTACT] for location and customer service.
-- Use [NAV:PRODUCT:Name] when you want to highlight a specific item from the catalog below.
-- Use [EXT:WhatsApp Link] if they want to speak to a human artisan.
-
-CURRENT ATELIER CATALOG (Use these for recommendations):
-${productContext}
-
-RESPONSE STYLE:
-- Short, elegant, and punchy.
-- Always be helpful and direct.
-- If you don't know something, offer a WhatsApp connection to a human artisan.`,
-    });
-
-    // Build conversation history for Gemini
-    const contents = history && Array.isArray(history)
-      ? history.map((msg: any) => ({
-          role: msg.role === 'user' ? 'user' : 'model',
-          parts: [{ text: msg.parts?.[0]?.text || msg.text || '' }],
-        }))
-      : [];
-
-    // Add current message
-    contents.push({
-      role: 'user',
-      parts: [{ text: message }],
-    });
+    const model = genAI.getGenerativeModel({ model:MODEL, systemInstruction });
+    const contents = Array.isArray(history) ? history.slice(-12).map((m:any)=>({ role:m.role==='user'?'user':'model', parts:[{ text:String(m.parts?.[0]?.text || m.text || '') }] })) : [];
+    contents.push({ role:'user', parts:[{ text:message.trim() }] });
 
     const result = await model.generateContent({ contents });
-    const aiText = result.response.text();
-
-    res.json({ text: aiText });
-
-  } catch (error: any) {
-    console.error('AI STYLIST CORE ERROR:', error);
-
-    let errorMessage = "My apologies, Envoy. I am momentarily reconnecting with our global style vault. Please try your inquiry again in a few seconds.";
-
-    if (error?.status === 429 || error?.message?.includes('429')) {
-      errorMessage = "We are currently experiencing high demand. I am prioritizing your session; please wait a few seconds.";
-    } else if (error?.message?.includes('API key')) {
-      errorMessage = "System authentication issue. Please contact the atelier administrator.";
-    }
-
-    res.status(500).json({ error: errorMessage });
+    const text = result.response.text();
+    if (!text) throw new Error('Empty AI response');
+    return res.json({ text });
+  } catch (error:any) {
+    console.error('AI Stylist Error:', error);
+    const status = error?.status === 429 || String(error?.message||'').includes('429') ? 429 : 500;
+    const errorMessage = status === 429
+      ? 'The stylist is receiving many requests right now. Please try again in a moment.'
+      : 'The stylist is temporarily reconnecting. Please try again in a few seconds.';
+    return res.status(status).json({ error:errorMessage });
   }
 };
