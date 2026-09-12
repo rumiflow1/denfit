@@ -73,7 +73,11 @@ export async function handleReviewRoutes(req: any, res: any): Promise<boolean> {
         const body = req.body || {};
         const allowed = ["pending", "approved", "hidden", "disapproved"];
         const update: any = {};
-        if (body.status && allowed.includes(String(body.status))) { update.status = String(body.status); update.isVisible = body.status === "approved"; }
+        if (body.status && allowed.includes(String(body.status))) {
+          update.status = String(body.status);
+          if (body.status === "approved") update.isVisible = true;
+          if (body.status === "hidden" || body.status === "disapproved") update.isVisible = false;
+        }
         if (body.isVisible !== undefined) update.isVisible = Boolean(body.isVisible);
         if (!Object.keys(update).length) return res.status(400).json({ success: false, error: "No valid review update supplied" });
         const review = await Review.findByIdAndUpdate(reviewId, update, { new: true }).lean();
