@@ -10,6 +10,9 @@ const UserSchema = new mongoose.Schema({
   password: String,
   otp: String,
   otpExpires: Date,
+  password: String,
+  otp: String,
+  otpExpires: Date,
   
   // Tracking for Admin (Point #12)
   activity: [{
