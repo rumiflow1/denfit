@@ -1,6 +1,12 @@
 {
   "version": 2,
-  "builds": [{ "src": "api/entry.ts", "use": "@vercel/node" }],
-  "rewrites": [{ "source": "/(.*)", "destination": "/api/entry.ts" }],
-  "crons": [{ "path": "/api/cron/abandoned-cart", "schedule": "0 * * * *" }]
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "/api/entry.ts" }
+  ],
+  "functions": {
+    "api/entry.ts": { "maxDuration": 60 }
+  },
+  "crons": [
+    { "path": "/api/cron/abandoned-cart", "schedule": "0 * * * *" }
+  ]
 }
