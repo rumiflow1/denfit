@@ -79,3 +79,60 @@ export const getOrderById = async (req: Request, res: Response) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
+
+
+// Create order route kept in sync with the Order model used by src/app.ts.
+// The Vercel API entrypoint has its own production order flow; this export prevents
+// the modular Express app from shipping a broken route import.
+export const createOrder = async (req: Request, res: Response) => {
+  try {
+    const body: any = req.body || {};
+    const items = Array.isArray(body.items) ? body.items : [];
+    if (!items.length) return res.status(400).json({ success: false, message: 'At least one order item is required.' });
+
+    const email = String(body.email || body.shippingDetails?.email || '').trim().toLowerCase();
+    const fullName = String(body.fullName || [body.shippingDetails?.firstName, body.shippingDetails?.lastName].filter(Boolean).join(' ') || '').trim();
+    const orderNumber = body.orderNumber || ('DNF-' + new Date().toISOString().slice(2, 10).replace(/-/g, '') + '-' + Math.floor(1000 + Math.random() * 9000));
+
+    const normalizedItems = items.map((item: any) => {
+      const price = Number(item.discountPrice ?? item.price ?? 0);
+      const quantity = Math.max(1, Number(item.quantity || 1));
+      return {
+        ...item,
+        productId: item.productId || item._id || '',
+        name: item.name || item.title || 'Product',
+        title: item.title || item.name || 'Product',
+        image: item.image || item.images?.[0] || '',
+        images: Array.isArray(item.images) ? item.images : (item.image ? [item.image] : []),
+        price,
+        quantity,
+        subtotal: Number(item.subtotal ?? price * quantity)
+      };
+    });
+
+    const totalAmount = Number(body.totalAmount ?? body.total ?? normalizedItems.reduce((sum: number, item: any) => sum + Number(item.subtotal || 0), 0));
+    const order = await Order.create({
+      userId: body.userId || 'GUEST',
+      orderNumber,
+      items: normalizedItems,
+      email,
+      fullName,
+      phone: body.phone || body.shippingDetails?.phone || '',
+      shippingAddress: body.shippingAddress || body.shippingDetails?.address || {},
+      shippingDetails: body.shippingDetails || {},
+      subtotal: Number(body.subtotal ?? totalAmount),
+      discountAmount: Number(body.discountAmount || 0),
+      discountCode: body.discountCode || '',
+      shippingCost: Number(body.shippingCost || 0),
+      totalAmount,
+      currency: String(body.currency || 'PKR').toUpperCase(),
+      status: 'Confirmed',
+      statusHistory: [{ status: 'Confirmed', at: new Date() }]
+    });
+
+    return res.status(201).json({ success: true, orderId: order._id, orderNumber: order.orderNumber, order });
+  } catch (error: any) {
+    console.error('Create order error:', error);
+    return res.status(500).json({ success: false, message: 'Unable to create order.' });
+  }
+};
