@@ -22,6 +22,7 @@ import {
   getStatusEmail,
 } from "../src/utils/AtelierEmails.js";
 import { sendTransactionalMail } from "../src/utils/mail.js";
+import { handleTryOn } from "./tryOn.js";
 
 dotenv.config();
 
@@ -1220,45 +1221,14 @@ app.get("/api/cron/abandoned-cart", async (req: Request, res: Response) => {
 });
 
 // =========================================================
-// --- REAL VIRTUAL TRY-ON (FASHN TRY-ON MAX) ---
-// =========================================================
+// --- REAL VIRTUAL TRY-ON ---
+// Keep direct Express/dev usage on the same resilient provider chain as the Vercel entry handler.
 app.post("/api/ai/try-on", async (req: Request, res: Response) => {
-  try {
-    const personImage = String(req.body?.personImage || "");
-    const garmentImage = String(req.body?.garmentImage || "");
-    const productName = String(req.body?.productName || "selected product");
-    if (!personImage.startsWith("data:image/") || !garmentImage.startsWith("data:image/")) return res.status(400).json({ error:"A valid person photo and product image are required" });
-    const apiKey = process.env.FASHN_API_KEY;
-    if (!apiKey) return res.status(503).json({ error:"Virtual fitting service is not configured", code:"FASHN_API_KEY_REQUIRED" });
-    const run = await globalThis.fetch("https://api.fashn.ai/v1/run", {
-      method:"POST",
-      headers:{ "Content-Type":"application/json", Authorization:`Bearer ${apiKey}` },
-      body:JSON.stringify({ model_name: process.env.FASHN_TRYON_MODEL || "tryon-max", inputs:{ product_image:garmentImage, model_image:personImage, generation_mode:"balanced", resolution:"1k", num_images:1, output_format:"jpeg", return_base64:true, prompt:`Create a realistic virtual fitting of the customer wearing ${productName}. Preserve the person's identity, face, pose and proportions. Integrate the selected product naturally.` } })
-    });
-    const runData:any = await run.json();
-    if (!run.ok || !runData?.id) return res.status(run.status || 502).json({ error:runData?.message || runData?.error || "Virtual fitting request was rejected" });
-    const deadline = Date.now() + 55000;
-    let latest:any;
-    while (Date.now() < deadline) {
-      await new Promise(resolve=>setTimeout(resolve, 1500));
-      const statusResponse = await globalThis.fetch(`https://api.fashn.ai/v1/status/${encodeURIComponent(runData.id)}`, { headers:{ Authorization:`Bearer ${apiKey}` } });
-      latest = await statusResponse.json();
-      if (latest?.status === "completed") {
-        const image = Array.isArray(latest.output) ? latest.output[0] : latest.output;
-        if (image) return res.json({ success:true, image, provider:"fashn", requestId:runData.id });
-        return res.status(502).json({ error:"Virtual fitting completed without an image" });
-      }
-      if (latest?.status === "failed") return res.status(502).json({ error:latest?.error?.message || latest?.error || "Virtual fitting generation failed" });
-    }
-    return res.status(504).json({ error:"Virtual fitting is still processing. Please try again." });
-  } catch (error:any) {
-    console.error("[try-on] failed", error);
-    res.status(500).json({ error:"Virtual fitting could not be completed" });
-  }
+  await handleTryOn(req, res);
 });
 
 // =========================================================
-// --- 16. GLOBAL HANDLERS ---
+// // --- 16. GLOBAL HANDLERS ---
 // =========================================================
 
 app.get("/", (req: Request, res: Response) => {
