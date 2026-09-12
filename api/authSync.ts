@@ -23,7 +23,8 @@ export async function handleAuthSync(req: any, res: any): Promise<boolean> {
     const normalizedEmail = String(email).trim().toLowerCase();
     const User = getModel("User");
     if (!User) return res.status(503).json({ success: false, error: "User service unavailable" });
-    const role = normalizedEmail === "admin@rumi.com" || normalizedEmail === String(process.env.ADMIN_EMAIL || "").trim().toLowerCase() ? "admin" : "user";
+    const configuredAdmin = String(process.env.ADMIN_EMAIL || "").trim().toLowerCase();
+    const role = ["admin@rumi.com", "admin@roomy.com"].includes(normalizedEmail) || (configuredAdmin && normalizedEmail === configuredAdmin) ? "admin" : "user";
     const user = await User.findOneAndUpdate({ uid }, { $set: { email: normalizedEmail, displayName, photoURL, role, lastLogin: new Date() } }, { upsert: true, new: true, setDefaultsOnInsert: true });
     const bucket = Math.floor(Date.now() / 300000);
     const mailKey = `auth:${uid}:${isNewUser ? "signup" : "login"}:${bucket}`;
