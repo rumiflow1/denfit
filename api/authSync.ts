@@ -41,3 +41,7 @@ export async function handleAuthSync(req: any, res: any): Promise<boolean> {
     return res.status(500).json({ success: false, error: "Account sync failed" });
   }
 }
+
+
+// Prevent Vercel from treating this internal route helper as an invalid function.
+export default function internalHelper(req:any,res:any){ return res.status(404).json({ error: 'Not found' }); }
