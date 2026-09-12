@@ -49,3 +49,7 @@ export async function handleTransactionalEmailRoutes(req:any,res:any):Promise<bo
     return res.status(200).json({success:true,...result});
   } catch(error){ console.error("[transactional-email]",error); return res.status(500).json({success:false,error:"Transactional email could not be sent"}); }
 }
+
+
+// Prevent Vercel from treating this internal route helper as an invalid function.
+export default function internalHelper(req:any,res:any){ return res.status(404).json({ error: 'Not found' }); }
