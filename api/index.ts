@@ -1137,13 +1137,16 @@ app.post("/api/auth/reset-password", async (req: Request, res: Response) => {
     const email = normalizeEmail(req.body?.email);
     const code = String(req.body?.code || "").trim();
     const newPassword = String(req.body?.newPassword || "");
+    const confirmPassword = String(req.body?.confirmPassword ?? newPassword);
+    if (newPassword !== confirmPassword) return res.status(400).json({ success:false, error:"Passwords do not match" });
     if (!email || !/^[0-9]{6}$/.test(code) || newPassword.length < 8) return res.status(400).json({ success:false, error:"Use a valid code and a password of at least 8 characters" });
     const record:any = await PasswordReset.findOne({ email, expiresAt: { $gt: new Date() } }).sort({ createdAt: -1 });
     if (!record || record.codeHash !== hashResetCode(email, code) || !record.verifiedAt) return res.status(400).json({ success:false, error:"Code verification is required before resetting the password" });
     try {
       getFirebaseAdmin();
     } catch (firebaseError:any) {
-      return res.status(503).json({ success:false, error:"Firebase Admin is not configured in production", code:"FIREBASE_ADMIN_CONFIG_REQUIRED", detail: firebaseError?.message });
+      console.error("[password-reset] Firebase Admin configuration missing", firebaseError?.message);
+      return res.status(503).json({ success:false, error:"Password reset is temporarily unavailable. Please try again later or contact support.", code:"PASSWORD_RESET_SERVICE_UNAVAILABLE" });
     }
     const firebaseUser = await admin.auth().getUserByEmail(email);
     await admin.auth().updateUser(firebaseUser.uid, { password: newPassword });
