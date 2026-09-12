@@ -20,3 +20,7 @@ export async function handleCustomerRoutes(req: any, res: any): Promise<boolean>
     return res.status(200).json({ users: enriched, logs });
   } catch (error) { console.error("[customers]", error); return res.status(500).json({ users: [], logs: [], error: "Unable to load customers" }); }
 }
+
+
+// Prevent Vercel from treating this internal route helper as an invalid function.
+export default function internalHelper(req:any,res:any){ return res.status(404).json({ error: 'Not found' }); }
