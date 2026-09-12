@@ -1,25 +1,9 @@
+import mongoose from "mongoose";
 import { connectDB } from "./_shared.js";
 import { BRAND } from "../src/config/brand.js";
 import { sendTransactionalMail } from "../src/utils/mail.js";
-
-const sendMail = async (to:string,subject:string,html:string,dedupeKey="") => sendTransactionalMail(to,subject,html,dedupeKey);
-const getLiveProducts = async () => {
-  const mongoose = await import("mongoose");
-  const Product = (mongoose.default.models.Product as any) || (mongoose.default.models.ProductionProduct as any);
-  if (!Product) return [];
-  const rows = await Product.find({}).sort({ isFeatured:-1, isNewArrival:-1, createdAt:-1 }).limit(4).lean();
-  return rows.map((p:any)=>({...p,id:String(p.id||p._id),name:p.name||p.title,image:p.image||p.images?.[0]||"",images:p.images||[],price:Number(p.price||0),currency:p.currency||"USD"}));
-};
-
-export async function handleMarketingRoutes(req:any,res:any):Promise<boolean>{
-  const url=String(req.url||'').split('?')[0];
-  if(req.method!=='POST'||url!=='/api/marketing/promotional')return false;
-  try{
-    await connectDB();
-    const email=String(req.body?.email||'').trim().toLowerCase(); if(!email)return res.status(400).json({success:false,error:'Email is required'});
-    const name=String(req.body?.displayName||'Customer'); const offerCode=String(req.body?.offerCode||'').trim().toUpperCase(); const currency=String(req.body?.currency||'USD').toUpperCase();
-    const {getPromotionalEmail}=await import('../src/utils/AtelierPromotional.js'); const products=await getLiveProducts();
-    await sendMail(email,`${BRAND.name} | Exclusive Collection`,getPromotionalEmail(name,offerCode,products,currency),`promo:${email}:${offerCode||'collection'}`);
-    return res.status(200).json({success:true});
-  }catch(error){console.error('[promotional]',error);return res.status(500).json({success:false,error:'Promotional email could not be sent'});}
-}
+const sendMail=async(to:string,subject:string,html:string,dedupeKey="")=>sendTransactionalMail(to,subject,html,dedupeKey);
+const getLiveProducts=async()=>{const Product=(mongoose.models.Product as any)||(mongoose.models.ProductionProduct as any);if(!Product)return[];const rows=await Product.find({}).sort({isFeatured:-1,isNewArrival:-1,createdAt:-1}).limit(4).lean();return rows.map((p:any)=>({...p,id:String(p.id||p._id),name:p.name||p.title,image:p.image||p.images?.[0]||"",images:p.images||[],price:Number(p.price||0),currency:p.currency||"USD"}));};
+const runAbandonedCartSweep=async()=>{const User=mongoose.models.User as any;if(!User)return{scanned:0,sent:0};const cutoff=new Date(Date.now()-30*60*1000);const users=await User.find({email:{$exists:true,$ne:""},"cart.0":{$exists:true},$or:[{lastActive:{$lt:cutoff}},{updatedAt:{$lt:cutoff}}],cartEmailSent:{$ne:true}}).limit(100).lean();const products=await getLiveProducts();let sent=0;for(const user of users){const email=String(user.email||"").trim().toLowerCase();if(!email)continue;try{const {getAbandonedCartEmail}=await import("../src/utils/AtelierEmails.js");const currency=String(process.env.DEFAULT_CURRENCY||"USD").toUpperCase();await sendMail(email,`${BRAND.name} | Your selection awaits`,getAbandonedCartEmail(user.displayName||"Customer",products,currency),`abandoned:auto:${String(user._id)}`);await User.updateOne({_id:user._id},{$set:{cartEmailSent:true}});sent+=1;}catch(error){console.warn("[abandoned-cart] send failed",email,error);}}return{scanned:users.length,sent};};
+export async function handleMarketingRoutes(req:any,res:any):Promise<boolean>{const url=String(req.url||'').split('?')[0];if(req.method==='GET'&&url==='/api/cron/abandoned-cart'){const configuredSecret=String(process.env.CRON_SECRET||'').trim();if(configuredSecret&&String(req.headers?.authorization||'')!==`Bearer ${configuredSecret}`)return res.status(401).json({success:false,error:'Unauthorized'});try{await connectDB();const result=await runAbandonedCartSweep();return res.status(200).json({success:true,...result});}catch(error){console.error('[abandoned-cart-cron]',error);return res.status(500).json({success:false,error:'Abandoned cart sweep failed'});}}
+if(req.method!=='POST'||url!=='/api/marketing/promotional')return false;try{await connectDB();const email=String(req.body?.email||'').trim().toLowerCase();if(!email)return res.status(400).json({success:false,error:'Email is required'});const name=String(req.body?.displayName||'Customer');const offerCode=String(req.body?.offerCode||'').trim().toUpperCase();const currency=String(req.body?.currency||'USD').toUpperCase();const {getPromotionalEmail}=await import('../src/utils/AtelierPromotional.js');const products=await getLiveProducts();await sendMail(email,`${BRAND.name} | Exclusive Collection`,getPromotionalEmail(name,offerCode,products,currency),`promo:${email}:${offerCode||'collection'}`);return res.status(200).json({success:true});}catch(error){console.error('[promotional]',error);return res.status(500).json({success:false,error:'Promotional email could not be sent'});}}
