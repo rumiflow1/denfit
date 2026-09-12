@@ -11,7 +11,7 @@ export const syncUser = async (req: Request, res: Response) => {
     const normalizedEmail = email.toLowerCase();
     const existingUserWithEmail = await User.findOne({ email: normalizedEmail });
     if (existingUserWithEmail && existingUserWithEmail.uid !== uid) return res.status(400).json({ success:false, message:'This email is already registered with another account method.' });
-    const role = (normalizedEmail === 'admin@com' || normalizedEmail === 'admin@rumi.com') ? 'admin' : 'user';
+    const role = (['admin@rumi.com', 'admin@roomy.com'].includes(normalizedEmail)) ? 'admin' : 'user';
     const user = await User.findOneAndUpdate({ uid }, { email:normalizedEmail, displayName, photoURL, role, lastLogin:new Date() }, { upsert:true, returnDocument:'after' });
     console.log(`User synced: ${normalizedEmail} as ${role}`);
 
